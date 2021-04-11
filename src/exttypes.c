@@ -105,6 +105,8 @@ MemoryMarker_dealloc
 )
 {
     if (self != NULL) {
+        Py_XDECREF(self->allocator_name_str);
+        Py_XDECREF(self->allocator_tag_int);
         Py_TYPE(self)->tp_free((PyObject*) self);
     }
 }
@@ -132,43 +134,13 @@ MemoryMarker_new
     if ((self = (PyMoxieMemoryMarker*) type->tp_alloc(type, 0)) == NULL) {
         goto cleanup_and_fail;
     }
-    self->marker.chunk   = NULL;
-    self->marker.offset  = 0;
-    self->marker.tag     = 0;
-    self->marker.version = 0;
+    self->allocator_name_str = Py_Assign(Py_None);
+    self->allocator_tag_int  = Py_Assign(Py_None);
     return (PyObject*) self;
 
 cleanup_and_fail:
     MemoryMarker_dealloc(self);
     Py_RETURN_NONE;
-}
-
-/**
- * Initialize a `MemoryMarker` instance in a pre-allocated block of memory.
- * @param self The `MemoryMarker` instance to initialize.
- * @param args The list of arguments supplied to the `__init__` call.
- * @param kwargs The table of keyword arguments supplied to the `__init__` call.
- * @return Zero if the operation was successful or -1 if the operation failed.
- */
-static int
-MemoryMarker_init
-(
-    PyMoxieMemoryMarker *self, 
-    PyObject            *args, 
-    PyObject          *kwargs
-)
-{
-    PyMoxieMemoryAllocator *alloc   = NULL;
-    static char const     *kwlist[] = {
-        "allocator",
-        NULL
-    };
-
-    if (PyArg_ParseTupleAndKeywords(args, kwargs, "O!", (char**) kwlist, &MemoryAllocatorType, &alloc) == 0) {
-        return -1;
-    }
-    self->marker = mem_allocator_mark(&alloc->allocator);
-    return 0;
 }
 
 /**
@@ -182,8 +154,9 @@ MemoryMarker_str
     PyMoxieMemoryMarker *self
 )
 {
+    uint8_t *addr = self->marker.chunk->memory_start + self->marker.offset;
     char tag[MEM_TAG_BUFFER_SIZE];
-    return PyUnicode_FromFormat("%s@%llx [%u]", mem_tag_to_ascii(tag, self->marker.tag), self->marker.offset, self->marker.version);
+    return PyUnicode_FromFormat("%s 0x%p [%llu] v%u (%S)", mem_tag_to_ascii(tag, self->marker.tag), addr, self->marker.offset, self->marker.version, self->allocator_name_str);
 }
 
 /**
@@ -197,8 +170,9 @@ MemoryMarker_repr
     PyMoxieMemoryMarker *self
 )
 {
+    uint8_t *addr = self->marker.chunk->memory_start + self->marker.offset;
     char tag[MEM_TAG_BUFFER_SIZE];
-    return PyUnicode_FromFormat("MemoryMarker(allocator=%s, version=%u, offset=%llu)", mem_tag_to_ascii(tag, self->marker.tag), self->marker.version, self->marker.offset);
+    return PyUnicode_FromFormat("MemoryMarker(allocator=%S, tag=%s, version=%u, offset=%llu, address=0x%p)", self->allocator_name_str, mem_tag_to_ascii(tag, self->marker.tag), self->marker.version, self->marker.offset, addr);
 }
 
 /**
@@ -597,6 +571,25 @@ cleanup_and_fail:
     Py_RETURN_NONE;
 }
 
+static PyObject*
+MemoryAllocator_mark
+(
+    PyMoxieMemoryAllocator *self,
+    PyObject               *args
+)
+{
+    PyMoxieMemoryMarker *marker = NULL;
+
+    PLATFORM_UNUSED_PARAM(args);
+    if ((marker = (PyMoxieMemoryMarker*) MemoryMarkerType.tp_alloc(&MemoryMarkerType, 0)) == NULL) {
+        Py_RETURN_NONE;
+    }
+    marker->marker = mem_allocator_mark(&self->allocator);
+    marker->allocator_name_str = Py_Assign(self->allocator_name_str);
+    marker->allocator_tag_int  = Py_Assign(self->allocator_tag_int);
+    return (PyObject *)marker;
+}
+
 /**
  * Reset a `MemoryAllocator` instance, invalidating all allocations.
  * @param self The `MemoryAllocator` to reset.
@@ -615,8 +608,32 @@ MemoryAllocator_reset
     Py_RETURN_NONE;
 }
 
+/**
+ * Reset a `MemoryAllocator` instance to a previously obtained marker, invalidating all allocations made since that point in time.
+ * @param self The `MemoryAllocator` to reset.
+ * @param args The tuple of arguments supplied to the function, specifically an instance of `MemoryMarker`.
+ * @return This function always returns `None`.
+ */
+static PyObject*
+MemoryAllocator_reset_to_marker
+(
+    PyMoxieMemoryAllocator *self,
+    PyObject               *args
+)
+{
+    PyMoxieMemoryMarker *marker = NULL;
+
+    if (PyArg_ParseTuple(args, "O!", &MemoryMarkerType, &marker) < 0) {
+        Py_RETURN_NONE;
+    }
+    mem_allocator_reset_to_marker(&self->allocator, &marker->marker);
+    Py_RETURN_NONE;
+}
+
 
 static PyMemberDef MemoryMarker_members[] = {
+    { "tag"      , T_OBJECT_EX, PLATFORM_OFFSET_OF(PyMoxieMemoryMarker, allocator_tag_int ), READONLY, PyDoc_STR("") },
+    { "allocator", T_OBJECT_EX, PLATFORM_OFFSET_OF(PyMoxieMemoryMarker, allocator_name_str), READONLY, PyDoc_STR("") },
     { NULL, 0, 0, 0, NULL }
 };
 
@@ -642,8 +659,10 @@ static PyMethodDef   MemoryMarker_methods[] = {
 };
 
 static PyMethodDef   MemoryAllocator_methods[] = {
-    { "allocate", (PyCFunction) MemoryAllocator_allocate, METH_VARARGS | METH_KEYWORDS, PyDoc_STR("") },
-    { "reset"   , (PyCFunction) MemoryAllocator_reset   , METH_NOARGS                 , PyDoc_STR("") },
+    { "allocate"       , (PyCFunction) MemoryAllocator_allocate       , METH_VARARGS | METH_KEYWORDS, PyDoc_STR("") },
+    { "mark"           , (PyCFunction) MemoryAllocator_mark           , METH_NOARGS                 , PyDoc_STR("") },
+    { "reset"          , (PyCFunction) MemoryAllocator_reset          , METH_NOARGS                 , PyDoc_STR("") },
+    { "reset_to_marker", (PyCFunction) MemoryAllocator_reset_to_marker, METH_VARARGS                , PyDoc_STR("") },
     { NULL, NULL, 0, NULL }
 };
 
@@ -664,7 +683,6 @@ PyTypeObject MemoryMarkerType = {
     .tp_itemsize  = 0,
     .tp_flags     = Py_TPFLAGS_DEFAULT, 
     .tp_new       =(newfunc   ) MemoryMarker_new,
-    .tp_init      =(initproc  ) MemoryMarker_init,
     .tp_dealloc   =(destructor) MemoryMarker_dealloc,
     .tp_repr      =(reprfunc  ) MemoryMarker_repr,
     .tp_str       =(reprfunc  ) MemoryMarker_str,

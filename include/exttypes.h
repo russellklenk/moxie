@@ -23,6 +23,8 @@ extern PyTypeObject MemoryAllocationType;                                      /
 
 typedef struct PyMoxieMemoryMarker {                                           /* Python type wrapper for moxie's mem_marker_t struct.       */
     PyObject_HEAD
+    PyObject        *allocator_name_str;
+    PyObject         *allocator_tag_int;
     mem_marker_t                 marker;
 } PyMoxieMemoryMarker;
 
