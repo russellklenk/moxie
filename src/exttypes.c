@@ -571,6 +571,12 @@ cleanup_and_fail:
     Py_RETURN_NONE;
 }
 
+/**
+ * Obtain a marker representing the state of a `MemoryAllocator` at the current point in time.
+ * @param self The `MemoryAllocator` for which the marker should be obtained.
+ * @param args Arguments supplied to the function (unused).
+ * @return This function always returns `None`.
+ */
 static PyObject*
 MemoryAllocator_mark
 (
