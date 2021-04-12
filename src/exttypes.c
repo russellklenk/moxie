@@ -156,7 +156,7 @@ MemoryMarker_str
 {
     uint8_t *addr = self->marker.chunk->memory_start + self->marker.offset;
     char tag[MEM_TAG_BUFFER_SIZE];
-    return PyUnicode_FromFormat("%s 0x%p [%llu] v%u (%S)", mem_tag_to_ascii(tag, self->marker.tag), addr, self->marker.offset, self->marker.version, self->allocator_name_str);
+    return PyUnicode_FromFormat("%s %p [%llu] v%u (%S)", mem_tag_to_ascii(tag, self->marker.tag), addr, self->marker.offset, self->marker.version, self->allocator_name_str);
 }
 
 /**
@@ -172,7 +172,7 @@ MemoryMarker_repr
 {
     uint8_t *addr = self->marker.chunk->memory_start + self->marker.offset;
     char tag[MEM_TAG_BUFFER_SIZE];
-    return PyUnicode_FromFormat("MemoryMarker(allocator=%S, tag=%s, version=%u, offset=%llu, address=0x%p)", self->allocator_name_str, mem_tag_to_ascii(tag, self->marker.tag), self->marker.version, self->marker.offset, addr);
+    return PyUnicode_FromFormat("MemoryMarker(allocator=%S, tag=%s, version=%u, offset=%llu, address=%p)", self->allocator_name_str, mem_tag_to_ascii(tag, self->marker.tag), self->marker.version, self->marker.offset, addr);
 }
 
 /**
@@ -246,7 +246,7 @@ MemoryAllocation_str
 {
     char tag[MEM_TAG_BUFFER_SIZE];
     mem_tag_to_ascii(tag, self->tag);
-    return PyUnicode_FromFormat("%s 0x%p, %zu bytes (%S)", tag, self->base_address, self->byte_length, self->allocator_name_str);
+    return PyUnicode_FromFormat("%s %p, %zu bytes (%S)", tag, self->base_address, self->byte_length, self->allocator_name_str);
 }
 
 /**
@@ -262,7 +262,7 @@ MemoryAllocation_repr
 {
     char tag[MEM_TAG_BUFFER_SIZE];
     mem_tag_to_ascii(tag, self->tag);
-    return PyUnicode_FromFormat("MemoryAllocation(address=0x%p, length=%zu, readonly=%S, source=%s(%S))", self->base_address, self->byte_length, self->readonly_bool, tag, self->allocator_name_str);
+    return PyUnicode_FromFormat("MemoryAllocation(address=%p, length=%zu, readonly=%S, source=%s(%S))", self->base_address, self->byte_length, self->readonly_bool, tag, self->allocator_name_str);
 }
 
 /**
@@ -636,6 +636,151 @@ MemoryAllocator_reset_to_marker
     Py_RETURN_NONE;
 }
 
+/**
+ * Free resources associated with a `JobQueue` instance.
+ * @param self The object to delete.
+ */
+static void
+JobQueue_dealloc
+(
+    PyMoxieJobQueue *self
+)
+{
+    if (self != NULL) {
+        Py_XDECREF(self->queue_name_str);
+        Py_XDECREF(self->queue_id_int);
+        Py_TYPE(self)->tp_free((PyObject*) self);
+    }
+}
+
+/**
+ * Allocate memory for and default-initialize the fields of a `JobQueue` instance.
+ * @param type The `JobQueueType` instance.
+ * @param args The list of arguments supplied to the `__new__` call.
+ * @param kwargs The table of keyword arguments supplied to the `__new__` call.
+ * @return A pointer to the new instance, or `None` if the instance initialization failed.
+ */
+static PyObject*
+JobQueue_new
+(
+    PyTypeObject *type, 
+    PyObject     *args, 
+    PyObject   *kwargs
+)
+{
+    PyMoxieJobQueue *self = NULL;
+
+    PLATFORM_UNUSED_PARAM(args);
+    PLATFORM_UNUSED_PARAM(kwargs);
+
+    if ((self = (PyMoxieJobQueue*) type->tp_alloc(type, 0)) == NULL) {
+        goto cleanup_and_fail;
+    }
+    self->queue_name_str = Py_Assign(Py_None);
+    self->queue_id_int   = Py_Assign(Py_None);
+    return (PyObject*) self;
+
+cleanup_and_fail:
+    JobQueue_dealloc(self);
+    Py_RETURN_NONE;
+}
+
+/**
+ * Initialize a `JobQueue` instance in a pre-allocated block of memory.
+ * @param self The `JobQueue` instance to initialize.
+ * @param args The list of arguments supplied to the `__init__` call.
+ * @param kwargs The table of keyword arguments supplied to the `__init__` call.
+ * @return Zero if the operation was successful or -1 if the operation failed.
+ */
+static int
+JobQueue_init
+(
+    PyMoxieJobQueue *self, 
+    PyObject        *args, 
+    PyObject      *kwargs
+)
+{
+    struct job_queue_t       *queue = NULL;
+    PyObject                  *temp = NULL; /* Used for dropping references. */
+    char const                *name = NULL; /* A name associated with the queue, used for debugging. */
+    Py_ssize_t              namelen = 0;    /* The length of the name string, in bytes. */
+    Py_ssize_t                 argc = 0;
+    uint32_t                     id = 0;    /* The unique integer identifier of the queue. */
+    static char const     *kwlist[] = { "name", "id", NULL };
+
+    if (kwargs == NULL || (argc = PyDict_Size(kwargs)) == 0) {
+        PyErr_SetString(PyExc_SyntaxError, "Too few arguments specified to JobQueue.__init__");
+        return -1;
+    }
+
+    if (PyArg_ParseTupleAndKeywords(args, kwargs, "|$z#I:__init__", (char**) kwlist, &name, &namelen, &id) == 0) {
+        return -1;
+    }
+    if (argc < 2) {
+        if (id == 0) { /* No id argument specified - hash the name */
+            PyObject *name_obj = PyDict_GetItemString(kwargs, "name");
+            if (name_obj != NULL) {
+                id  = (uint32_t) PyObject_Hash(name_obj);
+            } else {
+                PyErr_SetString(PyExc_SyntaxError, "JobQueue name argument must be a non-empty string");
+                return -1;
+            }
+        }
+    }
+    if ((queue = job_queue_create(id)) == NULL) {
+        PyErr_SetString(PyExc_MemoryError, "Failed to create job queue instance");
+        return -1;
+    }
+
+    temp = self->queue_name_str;
+    if (name != NULL) {
+        if ((self->queue_name_str = PyUnicode_FromStringAndSize(name, namelen)) == NULL) {
+            Py_XDECREF(temp);
+            goto cleanup_and_fail;
+        }
+    }
+    Py_XDECREF(temp);
+
+    temp = self->queue_id_int;
+    if ((self->queue_id_int = PyLong_FromUnsignedLong(id)) == NULL) {
+        Py_XDECREF(temp);
+        goto cleanup_and_fail;
+    }
+    Py_XDECREF(temp);
+    return 0;
+
+cleanup_and_fail:
+    return -1;
+}
+
+/**
+ * Obtain a `str` representation of a `JobQueue` instance.
+ * @param self The `JobQueue` instance.
+ * @return A `str` describing the `JobQueue`.
+ */
+static PyObject*
+JobQueue_str
+(
+    PyMoxieJobQueue *self
+)
+{
+    return PyUnicode_FromFormat("%S [%S] @ %p", self->queue_name_str, self->queue_id_int, (void*) self->queue);
+}
+
+/**
+ * Obtain a `str` representation of a `JobQueue` instance.
+ * @param self The `JobQueue` instance.
+ * @return A `str` describing the job queue.
+ */
+static PyObject*
+JobQueue_repr
+(
+    PyMoxieJobQueue *self
+)
+{
+    return PyUnicode_FromFormat("JobQueue(name=%S, id=%S)", self->queue_name_str, self->queue_id_int);
+}
+
 
 static PyMemberDef MemoryMarker_members[] = {
     { "tag"      , T_OBJECT_EX, PLATFORM_OFFSET_OF(PyMoxieMemoryMarker, allocator_tag_int ), READONLY, PyDoc_STR("") },
@@ -660,6 +805,12 @@ static PyMemberDef MemoryAllocation_members[] = {
     { NULL, 0, 0, 0, NULL }
 };
 
+static PyMemberDef JobQueue_members[] = {
+    { "id"       , T_OBJECT_EX, PLATFORM_OFFSET_OF(PyMoxieJobQueue, queue_id_int  ), READONLY, PyDoc_STR("") },
+    { "name"     , T_OBJECT_EX, PLATFORM_OFFSET_OF(PyMoxieJobQueue, queue_name_str), READONLY, PyDoc_STR("") },
+    { NULL, 0, 0, 0, NULL }
+};
+
 static PyMethodDef   MemoryMarker_methods[] = {
     { NULL, NULL, 0, NULL }
 };
@@ -673,6 +824,10 @@ static PyMethodDef   MemoryAllocator_methods[] = {
 };
 
 static PyMethodDef   MemoryAllocation_methods[] = {
+    { NULL, NULL, 0, NULL }
+};
+
+static PyMethodDef   JobQueue_methods[] = {
     { NULL, NULL, 0, NULL }
 };
 
@@ -726,4 +881,20 @@ PyTypeObject MemoryAllocationType = {
     .tp_members   = MemoryAllocation_members,
     .tp_methods   = MemoryAllocation_methods,
     .tp_as_buffer =&MemoryAllocation_as_buffer
+};
+
+PyTypeObject JobQueueType = {
+    PyVarObject_HEAD_INIT(NULL, 0)
+    .tp_name      = TYPE_NAME(JobQueue),
+    .tp_doc       = "",
+    .tp_basicsize = sizeof(PyMoxieJobQueue),
+    .tp_itemsize  = 0,
+    .tp_flags     = Py_TPFLAGS_DEFAULT,
+    .tp_new       =(newfunc   ) JobQueue_new,
+    .tp_init      =(initproc  ) JobQueue_init,
+    .tp_dealloc   =(destructor) JobQueue_dealloc,
+    .tp_repr      =(reprfunc  ) JobQueue_repr,
+    .tp_str       =(reprfunc  ) JobQueue_str,
+    .tp_members   = JobQueue_members,
+    .tp_methods   = JobQueue_methods
 };

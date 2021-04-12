@@ -17,9 +17,10 @@
 #include "moxie/memory.h"
 #include "moxie/scheduler.h"
 
-extern PyTypeObject MemoryMarkerType;                                          /* Python type MemoryMarker => py_memory_marker_t.            */
-extern PyTypeObject MemoryAllocatorType;                                       /* Python type MemoryAllocator => py_memory_allocator_t.      */
-extern PyTypeObject MemoryAllocationType;                                      /* Python type MemoryAllocation => py_memory_allocation_t.    */
+extern PyTypeObject MemoryMarkerType;                                          /* Python type MemoryMarker => PyMoxieMemoryMarker.            */
+extern PyTypeObject MemoryAllocatorType;                                       /* Python type MemoryAllocator => PyMoxieMemoryAllocator.      */
+extern PyTypeObject MemoryAllocationType;                                      /* Python type MemoryAllocation => PyMoxieMemoryAllocation.    */
+extern PyTypeObject JobQueueType;                                              /* Python type JobQueue => PyMoxieJobQueue. */
 
 typedef struct PyMoxieMemoryMarker {                                           /* Python type wrapper for moxie's mem_marker_t struct.       */
     PyObject_HEAD
@@ -48,5 +49,12 @@ typedef struct PyMoxieMemoryAllocation {                                       /
     size_t                  byte_length;
     mem_tag_t                       tag;
 } PyMoxieMemoryAllocation;
+
+typedef struct PyMoxieJobQueue {                                               /* Python type wrapper for a waitable job queue.              */
+    PyObject_HEAD
+    PyObject            *queue_name_str;
+    PyObject              *queue_id_int;
+    struct job_queue_t           *queue;
+} PyMoxieJobQueue;
 
 #endif /* __PYEXT_EXTTYPES_H__ */

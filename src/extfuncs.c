@@ -65,14 +65,19 @@ PyInit_moxie
     if (PyType_Ready(&MemoryAllocationType) < 0) {
         return NULL;
     }
+    if (PyType_Ready(&JobQueueType) < 0) {
+        return NULL;
+    }
     if ((mod = PyModule_Create(&gModuleDefinition)) == NULL) {
         return NULL;
     }
     Py_XINCREF(&MemoryMarkerType);
     Py_XINCREF(&MemoryAllocatorType);
     Py_XINCREF(&MemoryAllocationType);
+    Py_XINCREF(&JobQueueType);
     PyModule_AddObject(mod, "MemoryMarker"    , (PyObject*) &MemoryMarkerType);
     PyModule_AddObject(mod, "MemoryAllocator" , (PyObject*) &MemoryAllocatorType);
     PyModule_AddObject(mod, "MemoryAllocation", (PyObject*) &MemoryAllocationType);
+    PyModule_AddObject(mod, "JobQueue"        , (PyObject*) &JobQueueType);
     return mod;
 }
