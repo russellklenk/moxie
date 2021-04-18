@@ -563,6 +563,7 @@ MemoryAllocator_allocate
     } else {
         alloc->readonly_bool = Py_Assign(Py_False);
     }
+    Py_INCREF(alloc);
     return (PyObject *)alloc;
 
 cleanup_and_fail:
@@ -593,6 +594,7 @@ MemoryAllocator_mark
     marker->marker = mem_allocator_mark(&self->allocator);
     marker->allocator_name_str = Py_Assign(self->allocator_name_str);
     marker->allocator_tag_int  = Py_Assign(self->allocator_tag_int);
+    Py_INCREF(marker);
     return (PyObject *)marker;
 }
 
@@ -747,6 +749,8 @@ JobQueue_init
         goto cleanup_and_fail;
     }
     Py_XDECREF(temp);
+
+    self->queue = queue;
     return 0;
 
 cleanup_and_fail:
@@ -781,6 +785,481 @@ JobQueue_repr
     return PyUnicode_FromFormat("JobQueue(name=%S, id=%S)", self->queue_name_str, self->queue_id_int);
 }
 
+/**
+ * Flush a `JobQueue`, returning it to an empty state and releasing all waiting producers.
+ * @param self The `JobQueue` instance to flush.
+ * @return This function always returns `None`.
+ */
+static PyObject*
+JobQueue_flush
+(
+    PyMoxieJobQueue *self
+)
+{
+    job_queue_flush(self->queue);
+    Py_RETURN_NONE;
+}
+
+/**
+ * Check the signal status of a `JobQueue`.
+ * @param self The `JobQueue` instance to query.
+ * @return An `int` specifying the current signal code. If no signal is raised, this value will be zero.
+ */
+static PyObject*
+JobQueue_check_signal
+(
+    PyMoxieJobQueue *self
+)
+{
+    uint32_t signal = job_queue_check_signal(self->queue);
+    return PyLong_FromUnsignedLong(signal);
+}
+
+/**
+ * Raise a signal on a `JobQueue`, and wake all waiting producers and consumers.
+ * @param self The `JobQueue` instance to signal.
+ * @param args A single `int` argument specifying the signal code.
+ * @param kwargs A `dict` specifying the keyword arguments. The function accepts a single argument, `code: int`.
+ * @return This function always returns `None`.
+ */
+static PyObject*
+JobQueue_raise_signal
+(
+    PyMoxieJobQueue *self,
+    PyObject        *args,
+    PyObject      *kwargs
+)
+{
+    uint32_t           signal   = JOB_QUEUE_SIGNAL_CLEAR;
+    static char const *kwlist[] = { "code", NULL };
+
+    if (PyArg_ParseTupleAndKeywords(args, kwargs, "|k:signal", (char**) kwlist, &signal) == 0) {
+        return NULL;
+    }
+    job_queue_signal(self->queue, signal);
+    Py_RETURN_NONE;
+}
+
+/**
+ * Free resources associated with a `JobContext` instance.
+ * @param self The object to delete.
+ */
+static void
+JobContext_dealloc
+(
+    PyMoxieJobContext *self
+)
+{
+    if (self != NULL) {
+        if (self->jobctx != NULL) {
+            struct job_scheduler_t *scheduler = job_context_scheduler(self->jobctx);
+            job_scheduler_release_context(scheduler, self->jobctx);
+            self->jobctx = NULL;
+        }
+
+        Py_XDECREF(self->context_name_str);
+        Py_XDECREF(self->job_queue_obj);
+        Py_XDECREF(self->scheduler_obj);
+        Py_XDECREF(self->thread_id_int);
+        Py_TYPE(self)->tp_free((PyObject*) self);
+    }
+}
+
+/**
+ * Allocate memory for and default-initialize the fields of a `JobContext` instance.
+ * @param type The `JobContextType` instance.
+ * @param args The list of arguments supplied to the `__new__` call.
+ * @param kwargs The table of keyword arguments supplied to the `__new__` call.
+ * @return A pointer to the new instance, or `None` if the instance initialization failed.
+ */
+static PyObject*
+JobContext_new
+(
+    PyTypeObject *type, 
+    PyObject     *args, 
+    PyObject   *kwargs
+)
+{
+    PyMoxieJobContext *self = NULL;
+
+    PLATFORM_UNUSED_PARAM(args);
+    PLATFORM_UNUSED_PARAM(kwargs);
+
+    if ((self = (PyMoxieJobContext*) type->tp_alloc(type, 0)) == NULL) {
+        goto cleanup_and_fail;
+    }
+    self->context_name_str = Py_Assign(Py_None);
+    self->job_queue_obj    = Py_Assign(Py_None);
+    self->scheduler_obj    = Py_Assign(Py_None);
+    self->thread_id_int    = Py_Assign(Py_None);
+    self->jobctx           = NULL;
+    return (PyObject*) self;
+
+cleanup_and_fail:
+    JobContext_dealloc(self);
+    Py_RETURN_NONE;
+}
+
+/**
+ * Obtain a `str` representation of a `JobContext` instance.
+ * @param self The `JobContext` instance.
+ * @return A `str` describing the `JobContext`.
+ */
+static PyObject*
+JobContext_str
+(
+    PyMoxieJobContext *self
+)
+{
+    return PyUnicode_FromFormat("[%S] %S <=> %S", self->thread_id_int, self->context_name_str, self->job_queue_obj);
+}
+
+/**
+ * Obtain a `str` representation of a `JobContext` instance.
+ * @param self The `JobContext` instance.
+ * @return A `str` describing the job queue.
+ */
+static PyObject*
+JobContext_repr
+(
+    PyMoxieJobContext *self
+)
+{
+    return PyUnicode_FromFormat("JobContext(name=%S, queue=%S, thread=%S)", self->context_name_str, self->job_queue_obj, self->thread_id_int);
+}
+
+/**
+ * Implement the context manager __enter__ function for a `JobContext`.
+ * @param self The `JobContext` being acquired.
+ * @return A new reference to `self`.
+ */
+static PyObject*
+JobContext_enter
+(
+    PyMoxieJobContext *self
+)
+{
+    Py_XINCREF(self);
+    return (PyObject*) self;
+}
+
+/**
+ * Implement the context manager `__exit__` function for a `JobContext`, releasing the `JobContext` back to the `JobScheduler` that created it.
+ * @param self The `JobContext` being released.
+ * @param args Positional arguments passed to the function.
+ * @param kwargs Keyword arguments passed to the function.
+ * @return A new reference to `self`.
+ */
+static PyObject*
+JobContext_exit
+(
+    PyMoxieJobContext *self,
+    PyObject          *args,
+    PyObject        *kwargs
+)
+{
+    PyObject *result = NULL;
+
+    PLATFORM_UNUSED_PARAM(args);
+    PLATFORM_UNUSED_PARAM(kwargs);
+
+    if ((result = PyObject_CallMethod(self->scheduler_obj, "release_context", "(O)", self)) == NULL) {
+        return NULL;
+    }
+    Py_INCREF(self);
+    Py_DECREF(result);
+    return (PyObject*) self;
+}
+
+/**
+ * Free resources associated with a `JobScheduler` instance.
+ * @param self The object to delete.
+ */
+static void
+JobScheduler_dealloc
+(
+    PyMoxieJobScheduler *self
+)
+{
+    if (self != NULL) {
+        if (self->scheduler != NULL) {
+            job_scheduler_terminate(self->scheduler);
+            job_scheduler_delete(self->scheduler);
+        }
+        if (self->jobctx_list != NULL) {
+            PyList_SetSlice(self->jobctx_list, 0, PyList_Size(self->jobctx_list), NULL);
+        }
+
+        Py_XDECREF(self->scheduler_name_str);
+        Py_XDECREF(self->jobctx_list);
+        Py_TYPE(self)->tp_free((PyObject*) self);
+    }
+}
+
+/**
+ * Allocate memory for and default-initialize the fields of a `JobScheduler` instance.
+ * @param type The `JobSchedulerType` instance.
+ * @param args The list of arguments supplied to the `__new__` call.
+ * @param kwargs The table of keyword arguments supplied to the `__new__` call.
+ * @return A pointer to the new instance, or `None` if the instance initialization failed.
+ */
+static PyObject*
+JobScheduler_new
+(
+    PyTypeObject *type, 
+    PyObject     *args, 
+    PyObject   *kwargs
+)
+{
+    PyMoxieJobScheduler *self = NULL;
+
+    PLATFORM_UNUSED_PARAM(args);
+    PLATFORM_UNUSED_PARAM(kwargs);
+
+    if ((self = (PyMoxieJobScheduler*) type->tp_alloc(type, 0)) == NULL) {
+        goto cleanup_and_fail;
+    }
+    self->scheduler_name_str = Py_Assign(Py_None);
+    self->jobctx_list        = PyList_New(0);
+    self->scheduler          = NULL;
+    return (PyObject*) self;
+
+cleanup_and_fail:
+    JobScheduler_dealloc(self);
+    Py_RETURN_NONE;
+}
+
+/**
+ * Initialize a `JobScheduler` instance in a pre-allocated block of memory.
+ * @param self The `JobScheduler` instance to initialize.
+ * @param args The list of arguments supplied to the `__init__` call.
+ * @param kwargs The table of keyword arguments supplied to the `__init__` call.
+ * @return Zero if the operation was successful or -1 if the operation failed.
+ */
+static int
+JobScheduler_init
+(
+    PyMoxieJobScheduler *self, 
+    PyObject            *args, 
+    PyObject          *kwargs
+)
+{
+    struct job_scheduler_t   *sched = NULL;
+    PyObject                  *temp = NULL; /* Used for dropping references. */
+    char const                *name = NULL; /* A name associated with the scheduler, used for debugging. */
+    Py_ssize_t              namelen = 0;    /* The length of the name string, in bytes. */
+    Py_ssize_t                 argc = 0;
+    Py_ssize_t        context_count = 0;    /* The number of job contexts to pre-allocate. */
+    static char const     *kwlist[] = { "name", "context_count", NULL };
+
+    if (kwargs == NULL || (argc = PyDict_Size(kwargs)) == 0) {
+        PyErr_SetString(PyExc_SyntaxError, "Too few arguments specified to JobScheduler.__init__");
+        return -1;
+    }
+
+    if (PyArg_ParseTupleAndKeywords(args, kwargs, "|$z#n:__init__", (char**) kwlist, &name, &namelen, &context_count) == 0) {
+        return -1;
+    }
+    if (context_count < 0) {
+        context_count = 0;
+    }
+    if ((sched = job_scheduler_create((size_t) context_count)) == NULL) {
+        PyErr_SetString(PyExc_MemoryError, "Failed to create job scheduler instance");
+        return -1;
+    }
+
+    temp = self->scheduler_name_str;
+    if (name != NULL) {
+        if ((self->scheduler_name_str = PyUnicode_FromStringAndSize(name, namelen)) == NULL) {
+            Py_XDECREF(temp);
+            goto cleanup_and_fail;
+        }
+    }
+    Py_XDECREF(temp);
+
+    temp = self->jobctx_list;
+    if ((self->jobctx_list = PyList_New(0)) == NULL) {
+        Py_XDECREF(temp);
+        goto cleanup_and_fail;
+    }
+    Py_XDECREF(temp);
+
+    self->scheduler = sched;
+    return 0;
+
+cleanup_and_fail:
+    job_scheduler_delete(sched);
+    return -1;
+}
+
+/**
+ * Obtain a `str` representation of a `JobScheduler` instance.
+ * @param self The `JobScheduler` instance.
+ * @return A `str` describing the `JobScheduler`.
+ */
+static PyObject*
+JobScheduler_str
+(
+    PyMoxieJobScheduler *self
+)
+{
+    return PyUnicode_FromFormat("%S (%zd)", self->scheduler_name_str, PyList_Size(self->jobctx_list));
+}
+
+/**
+ * Obtain a `str` representation of a `JobScheduler` instance.
+ * @param self The `JobScheduler` instance.
+ * @return A `str` describing the job queue.
+ */
+static PyObject*
+JobScheduler_repr
+(
+    PyMoxieJobScheduler *self
+)
+{
+    return PyUnicode_FromFormat("JobScheduler(name=%S, context_count=%zd)", self->scheduler_name_str, PyList_Size(self->jobctx_list));
+}
+
+/**
+ * Wake up all waiting worker threads and signal them to terminate.
+ * @param self The `JobScheduler` to signal.
+ * @return This function always returns `None`.
+ */
+static PyObject*
+JobScheduler_terminate
+(
+    PyMoxieJobScheduler *self
+)
+{
+    job_scheduler_terminate(self->scheduler);
+    Py_RETURN_NONE;
+}
+
+/**
+ * Acquire a new `JobContext` used to create, submit and wait for jobs.
+ * @param self The `JobScheduler` from which the context should be acquired.
+ * @param args The positional argument list.
+ * @param kwargs The keyword argument `dict`.
+ * @return A new `JobContext` instance, or `None`.
+ */
+static PyObject*
+JobScheduler_acquire_context
+(
+    PyMoxieJobScheduler *self,
+    PyObject            *args,
+    PyObject          *kwargs
+)
+{
+    PyMoxieJobContext      *context = NULL;
+    PyMoxieJobQueue          *queue = NULL; /* PyMoxieJobQueue work queue to wait on. */
+    PyObject                 *pytid = NULL; /* PyLong thread identifier. */
+    PyObject                  *temp = NULL; /* Used for dropping references. */
+    char const                *name = NULL; /* A name associated with the context, used for debugging. */
+    Py_ssize_t              namelen = 0;    /* The length of the name string, in bytes. */
+    thread_id_t               owner = THREAD_ID_INVALID;
+    static char const     *kwlist[] = { "name", "work_queue", "owner_ident", NULL };
+
+    if (PyArg_ParseTupleAndKeywords(args, kwargs, "$z#O!O!:acquire_context", (char**) kwlist, &name, &namelen, &JobQueueType, &queue, &PyLong_Type, &pytid) == 0) {
+        return NULL;
+    }
+    if (Py_IsNotNone(pytid)) {
+        owner =(thread_id_t) PyLong_AsUnsignedLongLong(pytid);
+        if (PyErr_Occurred()) {
+            return NULL;
+        }
+    } else {
+        owner = current_thread_id();
+    }
+    if (Py_IsNone(queue)) {
+        PyErr_SetString(PyExc_ValueError, "The work_queue argument must be set to a valid JobQueue");
+        return NULL;
+    }
+    if (name == NULL || namelen == 0) {
+        name  = "(unnamed)";
+    }
+    if ((context = (PyMoxieJobContext*) JobContext_new(&JobContextType, NULL, NULL)) == NULL) {
+        PyErr_SetString(PyExc_MemoryError, "Failed to allocate new JobContext instance");
+        return NULL; 
+    }
+    if ((context->jobctx = job_scheduler_acquire_context(self->scheduler, queue->queue, owner)) == NULL) {
+        PyErr_SetString(PyExc_MemoryError, "Failed to acquire a new job_context_t");
+        goto cleanup_and_fail;
+    }
+
+    temp = context->context_name_str;
+    if (name != NULL) {
+        if ((context->context_name_str = PyUnicode_FromStringAndSize(name, namelen)) == NULL) {
+            Py_XDECREF(temp);
+            goto cleanup_and_fail;
+        }
+    }
+    Py_XDECREF(temp);
+
+    temp = context->job_queue_obj;
+    context->job_queue_obj = (PyObject*) queue;
+    Py_INCREF(queue);
+    Py_XDECREF(temp);
+
+    temp = context->scheduler_obj;
+    context->scheduler_obj = (PyObject*) self;
+    Py_INCREF(self);
+    Py_XDECREF(temp);
+
+    temp = context->thread_id_int;
+    if ((context->thread_id_int = PyLong_FromUnsignedLongLong((unsigned long long) owner)) == NULL) {
+        Py_XDECREF(temp);
+        goto cleanup_and_fail;
+    }
+    Py_XDECREF(temp);
+
+    if (PyList_Append(self->jobctx_list, _PyObject_CAST(context)) < 0) {
+        goto cleanup_and_fail;
+    }
+
+    Py_INCREF(context);
+    return (PyObject*) context;
+
+cleanup_and_fail:
+    JobContext_dealloc(context);
+    return NULL;
+}
+
+/**
+ * Release a previously-acquired `JobContext` when the owning thread no longer needs it.
+ * @param self The `JobScheduler` from which the `JobContext` was acquired.
+ * @param args A `JobContext` instance specifying the context to release.
+ * @return This function always returns `None`.
+ */
+static PyObject*
+JobScheduler_release_context
+(
+    PyMoxieJobScheduler *self,
+    PyObject            *args
+)
+{
+    PyMoxieJobContext *jobctx = NULL;
+    Py_ssize_t           i, n;
+
+    if (PyArg_ParseTuple(args, "O!", &JobContextType, &jobctx) < 0) {
+        return NULL;
+    }
+    if (jobctx == NULL || _PyObject_CAST(jobctx) == Py_None) {
+        Py_RETURN_NONE;
+    }
+    if ((n = PyList_Size(self->jobctx_list)) <= 0) {
+        Py_RETURN_NONE;
+    }
+    for (i = 0; i < n; ++i) {
+        PyMoxieJobContext  *item = (PyMoxieJobContext*) PyList_GetItem(self->jobctx_list, i);
+        if (item != NULL && item->jobctx == jobctx->jobctx) {
+            PyList_SetSlice(self->jobctx_list, i, i+1, NULL);
+            break;
+        }
+    }
+    Py_DECREF(jobctx);
+    Py_RETURN_NONE;
+}
+
 
 static PyMemberDef MemoryMarker_members[] = {
     { "tag"      , T_OBJECT_EX, PLATFORM_OFFSET_OF(PyMoxieMemoryMarker, allocator_tag_int ), READONLY, PyDoc_STR("") },
@@ -811,6 +1290,20 @@ static PyMemberDef JobQueue_members[] = {
     { NULL, 0, 0, 0, NULL }
 };
 
+static PyMemberDef JobContext_members[] = {
+    { "name"     , T_OBJECT_EX, PLATFORM_OFFSET_OF(PyMoxieJobContext, context_name_str), READONLY, PyDoc_STR("") },
+    { "owner"    , T_OBJECT_EX, PLATFORM_OFFSET_OF(PyMoxieJobContext, thread_id_int   ), READONLY, PyDoc_STR("") },
+    { "queue"    , T_OBJECT_EX, PLATFORM_OFFSET_OF(PyMoxieJobContext, job_queue_obj   ), READONLY, PyDoc_STR("") },
+    { "scheduler", T_OBJECT_EX, PLATFORM_OFFSET_OF(PyMoxieJobContext, scheduler_obj   ), READONLY, PyDoc_STR("") },
+    { NULL, 0, 0, 0, NULL }
+};
+
+static PyMemberDef JobScheduler_members[] = {
+    { "name"     , T_OBJECT_EX, PLATFORM_OFFSET_OF(PyMoxieJobScheduler, scheduler_name_str), READONLY, PyDoc_STR("") },
+    { "contexts" , T_OBJECT_EX, PLATFORM_OFFSET_OF(PyMoxieJobScheduler, jobctx_list       ), READONLY, PyDoc_STR("") },
+    { NULL, 0, 0, 0, NULL }
+};
+
 static PyMethodDef   MemoryMarker_methods[] = {
     { NULL, NULL, 0, NULL }
 };
@@ -828,6 +1321,22 @@ static PyMethodDef   MemoryAllocation_methods[] = {
 };
 
 static PyMethodDef   JobQueue_methods[] = {
+    { "flush"         , (PyCFunction) JobQueue_flush                  , METH_NOARGS                 , PyDoc_STR("") },
+    { "check_signal"  , (PyCFunction) JobQueue_check_signal           , METH_NOARGS                 , PyDoc_STR("") },
+    { "raise_signal"  , (PyCFunction) JobQueue_raise_signal           , METH_VARARGS | METH_KEYWORDS, PyDoc_STR("") },
+    { NULL, NULL, 0, NULL }
+};
+
+static PyMethodDef   JobContext_methods[] = {
+    { "__enter__"     , (PyCFunction) JobContext_enter                , METH_NOARGS                 , PyDoc_STR("") },
+    { "__exit__"      , (PyCFunction) JobContext_exit                 , METH_VARARGS | METH_KEYWORDS, PyDoc_STR("") },
+    { NULL, NULL, 0, NULL }
+};
+
+static PyMethodDef   JobScheduler_methods[] = {
+    { "acquire_context", (PyCFunction) JobScheduler_acquire_context   , METH_VARARGS | METH_KEYWORDS, PyDoc_STR("") },
+    { "release_context", (PyCFunction) JobScheduler_release_context   , METH_VARARGS                , PyDoc_STR("") },
+    { "terminate"      , (PyCFunction) JobScheduler_terminate         , METH_NOARGS                 , PyDoc_STR("") },
     { NULL, NULL, 0, NULL }
 };
 
@@ -897,4 +1406,35 @@ PyTypeObject JobQueueType = {
     .tp_str       =(reprfunc  ) JobQueue_str,
     .tp_members   = JobQueue_members,
     .tp_methods   = JobQueue_methods
+};
+
+PyTypeObject JobContextType = {
+    PyVarObject_HEAD_INIT(NULL, 0)
+    .tp_name      = TYPE_NAME(JobContext),
+    .tp_doc       = "",
+    .tp_basicsize = sizeof(PyMoxieJobContext),
+    .tp_itemsize  = 0,
+    .tp_flags     = Py_TPFLAGS_DEFAULT,
+    .tp_new       =(newfunc   ) JobContext_new,
+    .tp_dealloc   =(destructor) JobContext_dealloc,
+    .tp_repr      =(reprfunc  ) JobContext_repr,
+    .tp_str       =(reprfunc  ) JobContext_str,
+    .tp_members   = JobContext_members,
+    .tp_methods   = JobContext_methods
+};
+
+PyTypeObject JobSchedulerType = {
+    PyVarObject_HEAD_INIT(NULL, 0)
+    .tp_name      = TYPE_NAME(JobScheduler),
+    .tp_doc       = "",
+    .tp_basicsize = sizeof(PyMoxieJobScheduler),
+    .tp_itemsize  = 0,
+    .tp_flags     = Py_TPFLAGS_DEFAULT,
+    .tp_new       =(newfunc   ) JobScheduler_new,
+    .tp_init      =(initproc  ) JobScheduler_init,
+    .tp_dealloc   =(destructor) JobScheduler_dealloc,
+    .tp_repr      =(reprfunc  ) JobScheduler_repr,
+    .tp_str       =(reprfunc  ) JobScheduler_str,
+    .tp_members   = JobScheduler_members,
+    .tp_methods   = JobScheduler_methods
 };

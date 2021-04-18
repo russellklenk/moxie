@@ -21,6 +21,8 @@ extern PyTypeObject MemoryMarkerType;                                          /
 extern PyTypeObject MemoryAllocatorType;                                       /* Python type MemoryAllocator => PyMoxieMemoryAllocator.      */
 extern PyTypeObject MemoryAllocationType;                                      /* Python type MemoryAllocation => PyMoxieMemoryAllocation.    */
 extern PyTypeObject JobQueueType;                                              /* Python type JobQueue => PyMoxieJobQueue. */
+extern PyTypeObject JobContextType;                                            /* Python type JobContext => PyMoxieJobContext. */
+extern PyTypeObject JobSchedulerType;                                          /* Python type JobScheduler => PyMoxieJobScheduler. */
 
 typedef struct PyMoxieMemoryMarker {                                           /* Python type wrapper for moxie's mem_marker_t struct.       */
     PyObject_HEAD
@@ -56,5 +58,21 @@ typedef struct PyMoxieJobQueue {                                               /
     PyObject              *queue_id_int;
     struct job_queue_t           *queue;
 } PyMoxieJobQueue;
+
+typedef struct PyMoxieJobContext {                                             /* Python type wrapper for moxie's job_context_t type, representing the state required to execute jobs. */
+    PyObject_HEAD
+    PyObject          *context_name_str;
+    PyObject             *job_queue_obj;
+    PyObject             *scheduler_obj;
+    PyObject             *thread_id_int;
+    struct job_context_t        *jobctx;
+} PyMoxieJobContext;
+
+typedef struct PyMoxieJobScheduler {                                           /* Python type wrapper for moxie's job_scheduler_t type, used to acquire and release job contexts. */
+    PyObject_HEAD
+    PyObject        *scheduler_name_str;
+    PyObject               *jobctx_list;
+    struct job_scheduler_t   *scheduler;
+} PyMoxieJobScheduler;
 
 #endif /* __PYEXT_EXTTYPES_H__ */

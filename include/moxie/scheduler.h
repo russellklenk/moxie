@@ -47,7 +47,7 @@
 /**
  * Constants used by the job scheduler system.
  * JOB_ID_INVALID            : The value representing an invalid job identifier. Implicitly converable to bool.
- * JOB_NAMESPACE_COUNT_MAX   : The maximum number of namespaces (worker pools) that can be defined.
+ * JOB_QUEUE_COUNT_MAX       : The maximum number of waitable job queues that can be defined per-scheduler instance.
  * JOB_COUNT_MAX             : The maximum number of jobs created at any one time. This value must be a power of two.
  * JOB_WAITER_COUNT_MAX      : The maximum number of jobs that can be waiting on a single job to complete before they can start.
  * JOB_CONTEXT_RTRQ_MAX      : The capacity of the context-local ready-to-run queue. This value must be a power of two.
@@ -70,7 +70,7 @@
 #   define JOB_ID_VALID_MASK_PACKED                                             0x00000001U
 #   define JOB_ID_INDEX_MASK_PACKED                                             0x0001FFFEU
 #   define JOB_ID_GENER_MASK_PACKED                                             0xFFFE0000U
-#   define JOB_NAMESPACE_COUNT_MAX                                              16
+#   define JOB_QUEUE_COUNT_MAX                                                  16
 #   define JOB_COUNT_MAX                                                        65536
 #   define JOB_WAITER_COUNT_MAX                                                 32
 #   define JOB_CONTEXT_RTRQ_MAX                                                 64
@@ -157,26 +157,6 @@ typedef enum   job_state_e {                                                   /
     JOB_STATE_CANCELED                                           =  6,         /* The job has been canceled. */
 } job_state_e;
 
-typedef struct job_context_id_t {                                              /* Data uniquely identifying a specific job context. */
-    uint32_t                         id;                                       /* The identifier of the namespace to which the context belongs. */
-    uint32_t                        idx;                                       /* The zero-based index of the context within the namespace. */
-} job_context_id_t;
-
-typedef struct job_context_namespace_t {                                       /* Defines a job "namespace" which is essentially a collection of pairs of worker thread + `job_context_t`. */
-    uint32_t                         id;                                       /* An application-defined identifier for the context IDs, which must be >= JOB_CONTEXT_ID_USER. */
-    uint32_t                        num;                                       /* The number of contexts/worker threads to allocate in the namespace. */
-    size_t                        stack;                                       /* The size of the thread's stack, in bytes. May be THREAD_STACK_SIZE_DEFAULT, or 0 if id is JOB_CONTEXT_ID_MAIN. */
-    PFN_thread_start               main;                                       /* The entry point routine for the thread. May be NULL if id is JOB_CONTEXT_ID_MAIN. */
-    char const                    *name;                                       /* Pointer to a nul-terminated string literal specifying a human-readable name for the namespace. */
-} job_context_namespace_t;
-
-typedef struct job_scheduler_config_t {                                        /* Data used to configure a job scheduler. */
-    struct job_queue_t         **queues;                                       /* An array of namespace_count job queue references specifying the global work queues the contexts for each namespace park on. The same queue may be used across multiple namespaces. */
-    job_context_namespace_t *namespaces;                                       /* An array of namespace_count namespace definitions used to pre-initialize the job execution contexts. */
-    size_t              namespace_count;                                       /* The maximum number of job_context_t structures the application will ever allocate directly, typically one for each externally-managed worker thread. */
-    size_t        prealloc_jobbuf_count;                                       /* The number of job buffers to pre-allocate when the scheduler is created. If zero, no job buffers are pre-allocated. */
-} job_scheduler_config_t;
-
 typedef struct job_descriptor_t {                                              /* Information about an allocated job. Should be padded to cacheline size. */
     struct job_buffer_t         *jobbuf;                                       /* The job buffer that owns the data associated with the job. */
     struct job_queue_t          *target;                                       /* The job queue to which the job should be submitted when it becomes ready-to-run. */
@@ -200,16 +180,15 @@ typedef struct job_buffer_t {                                                  /
 } job_buffer_t;
 
 typedef struct job_context_t {                                                 /* Per-thread data required to define and execute jobs. */
+    struct job_context_t          *next;                                       /* Pointer to the next node in the free list. May be null. */
     struct job_queue_t           *queue;                                       /* The ready-to-run queue on which this context/thread waits for work. */
     struct job_buffer_t         *jobbuf;                                       /* The job buffer from which the context allocates. */
     struct job_scheduler_t       *sched;                                       /* A pointer back to the scheduler instance that created the context. */
     thread_id_t                   thrid;                                       /* The identifier of the thread that owns the context. This is the only thread that can create, submit and execute jobs using this context. */
+    uintptr_t                     user1;                                       /* Application-defined data associated with the context. */
+    uintptr_t                     user2;                                       /* Application-defined data associated with the context. */
     uint32_t                     jobcnt;                                       /* The number of jobs allocated from this context's current job buffer. */
-    uint32_t                      ctxid;                                       /* The application-defined identifier bound to the context at allocation time. */
-    uint32_t                   ctxindex;                                       /* The zero-based index of the context within the type namespace. */
-    uint32_t                   arrindex;                                       /* The zero-based index of the context within the scheduler's context list. */
-    char const                    *name;                                       /* The name of the context namespace (used for debugging purposes only). */
-    uint64_t                       pad1;                                       /* Reserved for future use. Set to zero. */
+    uint32_t                       pad1;                                       /* Reserved for future use. Set to zero. */
 } job_context_t;
 
 #ifdef __cplusplus
@@ -357,13 +336,13 @@ job_queue_take
 
 /**
  * Allocate and initialize storage for a job scheduler instance.
- * @param config Data used to configure the attributes of the job scheduler.
+ * @param context_count The number of job_context_t required by the application.
  * @return A pointer to the new scheduler instance, or NULL if an error occurred.
  */
 extern struct job_scheduler_t*
 job_scheduler_create
 (
-    struct job_scheduler_config_t *config
+    size_t context_count
 );
 
 /**
@@ -389,8 +368,7 @@ job_scheduler_terminate
 );
 
 /**
- * Assign a thread as the owner of a particular job execution context.
- * This function can be called to re-assign the owner of a job context in case a worker thread crashes.
+ * Assign a thread as the owner of a job execution context, and bind the context to a waitable job queue.
  * @param scheduler The job scheduler managing the job execution context to claim or assign.
  * @param namespace_id An application-defined identifier for the worker namespace, specified when the scheduler was created in job_context_namespace_t::id.
  * @param worker_index A zero-based index of the worker thread, in the range [0, job_context_namespace_t::num).
@@ -398,27 +376,23 @@ job_scheduler_terminate
  * @return A pointer to the associated job context, or NULL if the pair (namespace_id, worker_index) to not identify a known job context.
  */
 extern struct job_context_t*
-job_scheduler_assign_context
+job_scheduler_acquire_context
 (
     struct job_scheduler_t *scheduler,
-    uint32_t             namespace_id,
-    uint32_t             worker_index,
+    struct job_queue_t    *wait_queue,
     thread_id_t             owner_tid
 );
 
 /**
- * Retrieve the job context bound to a specific identifier.
- * @param scheduler The job scheduler managing the job execution context to claim or assign.
- * @param namespace_id An application-defined identifier for the worker namespace, specified when the scheduler was created in job_context_namespace_t::id.
- * @param worker_index A zero-based index of the worker thread, in the range [0, job_context_namespace_t::num).
- * @return A pointer to the associated job context, or NULL if the pair (namespace_id, worker_index) to not identify a known job context.
+ * Release ownership of a job context.
+ * @param scheduler The scheduler that owns the job context.
+ * @param context The job context to release.
  */
-extern struct job_context_t*
-job_scheduler_get_context
+extern void
+job_scheduler_release_context
 (
     struct job_scheduler_t *scheduler,
-    uint32_t             namespace_id,
-    uint32_t             worker_index
+    struct job_context_t     *context
 );
 
 /**
@@ -481,17 +455,6 @@ job_context_scheduler
  */
 extern struct job_queue_t*
 job_context_queue
-(
-    struct job_context_t   *context
-);
-
-/**
- * Retrieve a unique identifier for a job context.
- * @param context The context to query.
- * @return The unique identifier for the context.
- */
-extern struct job_context_id_t
-job_context_id
 (
     struct job_context_t   *context
 );

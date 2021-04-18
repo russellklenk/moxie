@@ -47,22 +47,20 @@ typedef struct job_scheduler_winos_t {                                         /
     job_data_winos_t         *jobdata;                                         /* Internal data representing job execution state. Capacity is JOB_COUNT_MAX, random access. */
     job_buffer_t             **jobbuf;                                         /* List of pointers to all currently allocated job buffers. Capacity is jobctx_limit, items in use jobctx_count. */
 
-    uint32_t               queue_count;                                         /* The number of unique queues across which jobs are scheduled. */
-    struct job_queue_t    *job_queues[JOB_NAMESPACE_COUNT_MAX];                /* The subset of unique queues across which jobs are scheduled. */
-    uint32_t                queue_ids[JOB_NAMESPACE_COUNT_MAX];                /* List of queue identifiers for each item in job_queues. */
-    uint32_t               queue_refs[JOB_NAMESPACE_COUNT_MAX];                /* List of reference counts for each queue (number of worker threads that publish to that queue). */
+    SRWLOCK              queue_rwlock;                                         /* Reader-writer lock to protect queue information which is mostly read-only. */
+    size_t                queue_count;                                         /* The number of unique queues across which jobs are scheduled. */
+    struct job_queue_t    *job_queues[JOB_QUEUE_COUNT_MAX];                    /* The subset of unique queues across which jobs are scheduled. */
+    uint32_t                queue_ids[JOB_QUEUE_COUNT_MAX];                    /* List of queue identifiers for each item in job_queues. */
+    uint32_t               queue_refs[JOB_QUEUE_COUNT_MAX];                    /* List of reference counts for each queue (number of worker threads that publish to that queue). */
 
     SRWLOCK             jobctx_rwlock;                                         /* Reader-writer lock to protect job context-related fields which are mostly read-only. */
-    uint32_t                  *appids;                                         /* List of application-defined identifiers for each job context; appids[i] -> ctxids[i] -> jobctx[i]. */
-    DWORD                     *thrids;                                         /* List of integer operating system thread identifiers for each job context; thrids[i] -> ctxids[i] - > appids[i] -> jobctx[i]. */
-    thread_id_t               *ctxids;                                         /* List of operating system thread identifiers for each job context; ctxids[i] -> appids[i] -> jobctx[i]. */
-    job_context_t             *jobctx;                                         /* Pre-allocated list of job contexts, initialized from namespace information. */
-    uint32_t             jobctx_count;                                         /* Number of valid entries in the appids, ctxids and jobctx arrays. */
+    job_context_t       *jobctx_flist;                                         /* The head of the free list of job contexts. */
+    size_t               jobctx_count;                                         /* The total number of allocated job contexts. */
 
     CRITICAL_SECTION     jobbuf_mutex;                                         /* The mutex protecting the jobbuf_flist and jobbuf_count fields. */
     job_buffer_t        *jobbuf_flist;                                         /* Head node of the free list of job buffers. */
-    uint32_t             jobbuf_limit;                                         /* The capacity of the jobbuf array. */
-    uint32_t             jobbuf_count;                                         /* The number of valid entries in the jobbuf array. */
+    size_t               jobbuf_limit;                                         /* The capacity of the jobbuf array. */
+    size_t               jobbuf_count;                                         /* The number of valid entries in the jobbuf array. */
 } job_scheduler_winos_t;
 
 typedef struct thread_arg_winos_t {                                            /* Data supplied to winthread_wrapper_entry when a thread is launched via thread_create. */
@@ -106,7 +104,7 @@ atomic_decrement_u32
 static struct job_buffer_t*
 job_buffer_create
 (
-    uint32_t buffer_index
+    size_t buffer_index
 )
 {
     job_buffer_t *jobbuf = NULL;
@@ -122,7 +120,7 @@ job_buffer_create
         jobbuf->membase =(uint8_t*) jobmem;
         jobbuf->nxtofs  = 0;
         jobbuf->maxofs  = JOB_BUFFER_SIZE_BYTES;
-        jobbuf->jobbase = JOB_BUFFER_JOB_COUNT * buffer_index;
+        jobbuf->jobbase =(uint32_t)(JOB_BUFFER_JOB_COUNT * buffer_index);
         jobbuf->refcnt  = 0;
         return jobbuf;
     } else { /* Failed to allocate job memory */
@@ -544,45 +542,26 @@ job_queue_take
 struct job_scheduler_t*
 job_scheduler_create
 (
-    struct job_scheduler_config_t *config
+    size_t context_count
 )
 {
     job_scheduler_winos_t *scheduler = NULL;
+    job_context_t            *jobctx = NULL;
+    job_buffer_t             *jobbuf = NULL;
     uint8_t             *memory_base = NULL;
     uint8_t                     *ptr = NULL;
     size_t           jobbuf_capacity =(JOB_COUNT_MAX + (JOB_BUFFER_JOB_COUNT - 1)) / JOB_BUFFER_JOB_COUNT;
     size_t              bytes_needed = 0;
-    size_t            prealloc_count = 0;
-    size_t             context_count = 0;
-    size_t             context_index = 0;
-    size_t               queue_count = 0;
-    size_t               queue_index = 0;
     size_t                 page_size = 0;
-    int                  found_queue = 0;
+    size_t                         i = 0;
     DWORD                     access = PAGE_READWRITE;
     DWORD                      flags = MEM_RESERVE | MEM_COMMIT;
-    size_t                i, j, n, m;
     SYSTEM_INFO              sysinfo;
 
-    if (config == NULL || config->queues == NULL || config->namespaces == NULL || config->namespace_count == 0 || config->namespace_count > JOB_NAMESPACE_COUNT_MAX) {
-        assert(config != NULL && "Expected non-null config argument");
-        assert(config->queues != NULL && "The queue list must be non-null");
-        assert(config->namespaces != NULL && "The namespace list must be non-null");
-        assert(config->namespace_count != 0 && "At least one scheduler namespace must be defined");
-        assert(config->namespace_count <= JOB_NAMESPACE_COUNT_MAX && "Namespace count exceeds maximum");
-        return NULL;
-    }
     GetNativeSystemInfo(&sysinfo);
     page_size = sysinfo.dwPageSize;
-
-    /* Determine the number of required job contexts */
-    for (i = 0, n = config->namespace_count, context_count = 0; i < n; ++i) {
-        context_count += config->namespaces[i].num;
-    }
-    if (config->prealloc_jobbuf_count > context_count) {
-        prealloc_count = config->prealloc_jobbuf_count;
-    } else {
-        prealloc_count = context_count;
+    if (context_count == 0) {
+        context_count  = 16;
     }
 
     /* Determine the amount of memory required, rounded up to the next multiple of page size */
@@ -590,10 +569,6 @@ job_scheduler_create
     bytes_needed     += sizeof(job_descriptor_t      )  *   JOB_COUNT_MAX;    /* jobdesc     */
     bytes_needed     += sizeof(job_data_winos_t      )  *   JOB_COUNT_MAX;    /* jobdata     */
     bytes_needed     += sizeof(job_buffer_t         *)  *   jobbuf_capacity;  /* jobbuf      */
-    bytes_needed     += sizeof(uint32_t              )  *   context_count;    /* appids      */
-    bytes_needed     += sizeof(DWORD                 )  *   context_count;    /* thrids      */
-    bytes_needed     += sizeof(thread_id_t           )  *   context_count;    /* ctxids      */
-    bytes_needed     += sizeof(job_context_t         )  *   context_count;    /* jobctx      */
     bytes_needed      =(bytes_needed + (page_size - 1)) & ~(page_size - 1);
 
     /* Allocate all memory as a single large block using the VMM so it's pre-zeroed */
@@ -606,73 +581,62 @@ job_scheduler_create
     scheduler->jobdesc = (job_descriptor_t     *) ptr; ptr += sizeof(job_descriptor_t     ) * JOB_COUNT_MAX;
     scheduler->jobdata = (job_data_winos_t     *) ptr; ptr += sizeof(job_data_winos_t     ) * JOB_COUNT_MAX;
     scheduler->jobbuf  = (job_buffer_t        **) ptr; ptr += sizeof(job_buffer_t        *) * jobbuf_capacity;
-    scheduler->appids  = (uint32_t             *) ptr; ptr += sizeof(uint32_t             ) * context_count;
-    scheduler->thrids  = (DWORD                *) ptr; ptr += sizeof(DWORD                ) * context_count;
-    scheduler->ctxids  = (thread_id_t          *) ptr; ptr += sizeof(thread_id_t          ) * context_count;
-    scheduler->jobctx  = (job_context_t        *) ptr; ptr += sizeof(job_context_t        ) * context_count;
 
-    /* Initialize context, queue and ID lists */
-    for (i = 0, n = config->namespace_count, context_index = 0, queue_index = 0; i < n; ++i) {
-        job_context_namespace_t *nsdef = &config->namespaces[i];
-        struct job_queue_t       *qdef =  config->queues[i]; assert(qdef != NULL);
-
-        for (j = 0, m = nsdef->num; j < m; ++j, ++context_index) {
-            job_context_t *ctx = &scheduler->jobctx[j];
-            ctx->queue     = qdef;
-            ctx->jobbuf    = NULL;
-            ctx->sched     =(struct job_scheduler_t*) scheduler;
-            ctx->thrid     = THREAD_ID_INVALID;
-            ctx->jobcnt    = 0;
-            ctx->ctxid     = nsdef->id;
-            ctx->ctxindex  =(uint32_t) j;             /* Local index  */
-            ctx->arrindex  =(uint32_t) context_index; /* Global index */
-            ctx->name      = nsdef->name;
-            ctx->pad1      = 0;
-
-            scheduler->appids[context_index] = nsdef->id;
-            scheduler->thrids[context_index] = 0;
-            scheduler->ctxids[context_index] = THREAD_ID_INVALID;
-        }
-        for (j = 0, m = queue_index, found_queue = 0; j < m; ++j) {
-            if (scheduler->job_queues[j] == qdef) {
-                found_queue = 1;
-                break;
-            }
-        }
-        if (found_queue == 0) {
-            scheduler->job_queues[queue_index] = qdef;
-            scheduler->queue_ids [queue_index] = job_queue_get_id(qdef);
-            scheduler->queue_refs[queue_index] = nsdef->num;
-            queue_count++;
-            queue_index++;
+    /* Pre-allocate the specified number of job contexts */
+    for (i = 0; i < context_count; ++i) {
+        if ((jobctx = (job_context_t*) malloc(sizeof(job_context_t))) == NULL) {
+            goto cleanup_and_fail;
         } else {
-            /* Found reference to this queue at index j */
-            scheduler->queue_refs[j] += nsdef->num;
+            jobctx->next   = scheduler->jobctx_flist;
+            jobctx->jobbuf = NULL;
+            jobctx->queue  = NULL;
+            jobctx->sched  =(struct job_scheduler_t*) scheduler;
+            jobctx->thrid  = THREAD_ID_INVALID;
+            jobctx->user1  = 0;
+            jobctx->user2  = 0;
+            jobctx->jobcnt = 0;
+            jobctx->pad1   = 0;
+            scheduler->jobctx_flist = jobctx;
         }
     }
 
     /* Pre-allocate enough job buffers for each context */
-    for (i = 0; i < prealloc_count; ++i) {
-        job_buffer_t *jobbuf = job_buffer_create((uint32_t) i);
-        if (jobbuf != NULL) {
-            if (i < context_count) { /* Assign to a context */
-                scheduler->jobctx[i].jobbuf = jobbuf;
-            } else { /* Place on the free list */
-                jobbuf->next = scheduler->jobbuf_flist;
-                scheduler->jobbuf_flist = jobbuf;
-                scheduler->jobbuf[i]    = jobbuf;
-            }
+    for (i = 0; i < context_count; ++i) {
+        if ((jobbuf = job_buffer_create(i)) == NULL) {
+            goto cleanup_and_fail;
+        } else {
+            jobbuf->next = scheduler->jobbuf_flist;
+            scheduler->jobbuf_flist = jobbuf;
+            scheduler->jobbuf[i]    = jobbuf;
         }
     }
 
+    InitializeSRWLock(&scheduler->queue_rwlock);
     InitializeSRWLock(&scheduler->jobctx_rwlock);
     (void) InitializeCriticalSectionAndSpinCount(&scheduler->jobbuf_mutex, 0x4000);
-    scheduler->memsize      = (uint64_t)    bytes_needed;
-    scheduler->queue_count  = (uint32_t)     queue_count;
-    scheduler->jobctx_count = (uint32_t)   context_count;
-    scheduler->jobbuf_limit = (uint32_t) jobbuf_capacity;
-    scheduler->jobbuf_count = (uint32_t)  prealloc_count;
-    return (struct job_scheduler_t    *)       scheduler;
+    scheduler->memsize      = bytes_needed;
+    scheduler->queue_count  = 0;
+    scheduler->jobctx_count = context_count;
+    scheduler->jobbuf_limit = jobbuf_capacity;
+    scheduler->jobbuf_count = context_count;
+    return (struct job_scheduler_t*) scheduler;
+
+cleanup_and_fail:
+    if (memory_base != NULL) {
+        if (scheduler != NULL) {
+            while (scheduler->jobbuf_flist != NULL) {
+                jobbuf = scheduler->jobbuf_flist;
+                scheduler->jobbuf_flist = jobbuf->next;
+                job_buffer_delete(jobbuf);
+            }
+            while (scheduler->jobctx_flist != NULL) {
+                jobctx = scheduler->jobctx_flist;
+                scheduler->jobctx_flist = jobctx->next;
+                free(jobctx);
+            }
+        }
+        (void) VirtualFree(memory_base, 0, MEM_RELEASE);
+    } return NULL;
 }
 
 void
@@ -683,6 +647,8 @@ job_scheduler_delete
 {
     if (scheduler != NULL) {
         job_scheduler_winos_t *sched_ =(job_scheduler_winos_t*) scheduler;
+        job_context_t        *jobctx  = NULL;
+        size_t               ctxfree  = 0;
         size_t                  i, n;
 
         EnterCriticalSection(&sched_->jobbuf_mutex);
@@ -693,13 +659,14 @@ job_scheduler_delete
         LeaveCriticalSection(&sched_->jobbuf_mutex);
 
         AcquireSRWLockExclusive(&sched_->jobctx_rwlock);
-        for (i = 0, n = sched_->jobctx_count; i < n; ++i) {
-            job_context_t *ctx = &sched_->jobctx[i];
-            ctx->jobbuf = NULL;
-            ctx->jobcnt = 0;
-            ctx->queue  = NULL;
+        while (sched_->jobctx_flist != NULL) {
+            jobctx = sched_->jobctx_flist;
+            sched_->jobctx_flist = jobctx->next;
+            free(jobctx); // NOTE: jobctx->jobbuf was freed above
+            ctxfree++;
         }
         ReleaseSRWLockExclusive(&sched_->jobctx_rwlock);
+        assert(ctxfree == sched_->jobctx_count && "One or more non-released job contexts detected, these will leak");
         DeleteCriticalSection(&sched_->jobbuf_mutex);
         VirtualFree((void*) sched_, 0, MEM_RELEASE);
     }
@@ -714,29 +681,34 @@ job_scheduler_terminate
     if (scheduler != NULL) {
         job_scheduler_winos_t *sched_ =(job_scheduler_winos_t*) scheduler;
         size_t                  i, n;
+
+        AcquireSRWLockExclusive(&sched_->queue_rwlock);
         for (i = 0, n = sched_->queue_count; i < n; ++i) {
             struct job_queue_t *queue = sched_->job_queues[i];
             job_queue_signal(queue, JOB_QUEUE_SIGNAL_TERMINATE);
         }
+        ReleaseSRWLockExclusive(&sched_->queue_rwlock);
     }
 }
 
 struct job_context_t*
-job_scheduler_assign_context
+job_scheduler_acquire_context
 (
     struct job_scheduler_t *scheduler,
-    uint32_t             namespace_id,
-    uint32_t             worker_index,
+    struct job_queue_t    *wait_queue,
     thread_id_t             owner_tid
 )
 {
     if (scheduler != NULL) {
         job_scheduler_winos_t *sched_ =(job_scheduler_winos_t*) scheduler;
-        job_context_t            *ctx = NULL;
-        HANDLE                  owner =(HANDLE) owner_tid;
-        HANDLE                 pseudo = GetCurrentThread();
-        DWORD                     tid = 0;
-        size_t                   i, n;
+        job_context_t           *ctx  = NULL;
+        job_buffer_t            *buf  = NULL;
+        HANDLE                 owner  =(HANDLE) owner_tid;
+        HANDLE                pseudo  = GetCurrentThread();
+        DWORD                    tid  = 0;
+        uint32_t                 qid  = job_queue_get_id(wait_queue);
+        uint32_t                 qix  = JOB_QUEUE_COUNT_MAX;
+        size_t                  i, n;
 
         if (owner == pseudo) {
             /* Convert from pseudo-handle to actual handle */
@@ -749,52 +721,103 @@ job_scheduler_assign_context
             tid = GetThreadId(owner);
         }
 
+        /* Acquire or allocate a job_context_t */
         AcquireSRWLockExclusive(&sched_->jobctx_rwlock);
-        for (i = 0, n = sched_->jobctx_count; i < n; ++i) {
-            if (sched_->appids[i] == namespace_id) {
-                break;
+        if ((ctx = sched_->jobctx_flist) != NULL) {
+            sched_->jobctx_flist = ctx->next;
+        } else if ((ctx = (job_context_t*) malloc(sizeof(job_context_t))) != NULL) {
+            sched_->jobctx_count++;
+        } /* Else, failed to allocate a context */
+        ReleaseSRWLockExclusive(&sched_->jobctx_rwlock);
+
+        /* Acquire or allocate a job_buffer_t to assign to the context */
+        if (ctx != NULL && (buf = jobbuf_acquire(sched_, NULL)) != NULL) {
+            ctx->next   = NULL;
+            ctx->jobbuf = buf;
+            ctx->queue  =(struct job_queue_t    *) wait_queue;
+            ctx->sched  =(struct job_scheduler_t*) scheduler;
+            ctx->thrid  = owner_tid;
+            ctx->user1  = 0;
+            ctx->user2  = 0;
+            ctx->jobcnt = 0;
+            ctx->pad1   = tid;
+        } else { /* Failed to acquire a job buffer. */
+            if (ctx != NULL) { /* Return ctx to the free pool. */
+                ctx->next  = sched_->jobctx_flist;
+                sched_->jobctx_flist = ctx;
+                ctx  = NULL;
             }
         }
-        if ((worker_index + i) < sched_->jobctx_count) {
-            ctx = &sched_->jobctx[worker_index + i];
-            assert(ctx->ctxid    == namespace_id);
-            assert(ctx->ctxindex == worker_index);
-            ctx->thrid                       = (thread_id_t) owner;
-            sched_->thrids[worker_index + i] = (DWORD      ) tid;
-            sched_->ctxids[worker_index + i] = (thread_id_t) owner;
+
+        /* Store queue reference & update queue reference count */
+        AcquireSRWLockExclusive(&sched_->queue_rwlock);
+        if (ctx != NULL) {
+            for (i = 0, n = sched_->queue_count; i < n; ++i) {
+                if (sched_->queue_refs[i] == qid) {
+                    qix = (uint32_t) i;
+                    break;
+                }
+            }
+            if (qix == JOB_QUEUE_COUNT_MAX) { /* Unknown queue */
+                sched_->job_queues[sched_->queue_count] = wait_queue;
+                sched_->queue_refs[sched_->queue_count] = 1;
+                sched_->queue_ids [sched_->queue_count] = qid;
+                sched_->queue_count++;
+            } else { /* Known queue, bump reference count */
+                sched_->queue_refs[qix]++;
+            }
         }
-        ReleaseSRWLockExclusive(&sched_->jobctx_rwlock);
+        ReleaseSRWLockExclusive(&sched_->queue_rwlock);
         return ctx;
     } return NULL;
 }
 
-struct job_context_t*
-job_scheduler_get_context
+void
+job_scheduler_release_context
 (
     struct job_scheduler_t *scheduler,
-    uint32_t             namespace_id,
-    uint32_t             worker_index
+    struct job_context_t     *context
 )
 {
-    if (scheduler != NULL) {
+    if (scheduler != NULL && context != NULL) {
         job_scheduler_winos_t *sched_ =(job_scheduler_winos_t*) scheduler;
-        job_context_t            *ctx = NULL;
-        size_t                   i, n;
+        job_buffer_t            *buf  = context->jobbuf;
+        uint32_t                 qid  = job_queue_get_id(context->queue);
+        uint32_t                 qix  = JOB_QUEUE_COUNT_MAX;
+        size_t                  i, n;
 
-        AcquireSRWLockShared(&sched_->jobctx_rwlock);
-        for (i = 0, n = sched_->jobctx_count; i < n; ++i) {
-            if (sched_->appids[i] == namespace_id) {
+        // Return the context back to the free pool.
+        AcquireSRWLockExclusive(&sched_->jobctx_rwlock);
+        context->next        = sched_->jobctx_flist;
+        context->jobbuf      = NULL;
+        context->queue       = NULL;
+        context->thrid       = THREAD_ID_INVALID;
+        sched_->jobctx_flist = context;
+        ReleaseSRWLockExclusive(&sched_->jobctx_rwlock);
+
+        // Return the job buffer back to the free pool, if possible.
+        jobbuf_release(sched_, buf);
+
+        // Decrement the reference count on the queue.
+        AcquireSRWLockExclusive(&sched_->queue_rwlock);
+        for (i = 0, n = sched_->queue_count; i < n; ++i) {
+            if (sched_->queue_ids[i] == qid) {
+                qix  = (uint32_t) i;
                 break;
             }
         }
-        if ((worker_index + i) < sched_->jobctx_count) {
-            ctx = &sched_->jobctx[worker_index + i];
-            assert(ctx->ctxid    == namespace_id);
-            assert(ctx->ctxindex == worker_index);
+        if (qix != JOB_QUEUE_COUNT_MAX) {
+            sched_->queue_refs[qix]--;
+            if (sched_->queue_refs[qix] == 0) {
+                /* No outstanding references */
+                sched_->job_queues[qix]  = sched_->job_queues[sched_->queue_count-1];
+                sched_->queue_refs[qix]  = sched_->queue_refs[sched_->queue_count-1];
+                sched_->queue_ids [qix]  = sched_->queue_ids [sched_->queue_count-1];
+                sched_->queue_count--;
+            }
         }
-        ReleaseSRWLockShared(&sched_->jobctx_rwlock);
-        return ctx;
-    } return NULL;
+        ReleaseSRWLockExclusive(&sched_->queue_rwlock);
+    }
 }
 
 struct job_queue_t*
@@ -806,12 +829,18 @@ job_scheduler_get_queue
 {
     if (scheduler != NULL) {
         job_scheduler_winos_t *sched_ =(job_scheduler_winos_t*) scheduler;
+        struct job_queue_t    *queue  = NULL;
         size_t                  i, n;
+
+        AcquireSRWLockShared(&sched_->queue_rwlock);
         for (i = 0, n = sched_->queue_count; i < n; ++i) {
             if (sched_->queue_ids[i] == queue_id) {
-                return sched_->job_queues[i];
+                queue = sched_->job_queues[i];
+                break;
             }
         }
+        ReleaseSRWLockShared(&sched_->queue_rwlock);
+        return queue;
     } return NULL;
 }
 
@@ -824,12 +853,18 @@ job_scheduler_get_queue_worker_count
 {
     if (scheduler != NULL) {
         job_scheduler_winos_t *sched_ =(job_scheduler_winos_t*) scheduler;
+        uint32_t                refs  = 0;
         size_t                  i, n;
+
+        AcquireSRWLockShared(&sched_->queue_rwlock);
         for (i = 0, n = sched_->queue_count; i < n; ++i) {
             if (sched_->queue_ids[i] == queue_id) {
-                return sched_->queue_refs[i];
+                refs = sched_->queue_refs[i];
+                break;
             }
         }
+        ReleaseSRWLockShared(&sched_->queue_rwlock);
+        return refs;
     } return 0;
 }
 
@@ -882,19 +917,6 @@ job_context_queue
     } else {
         return NULL;
     }
-}
-
-struct job_context_id_t
-job_context_id
-(
-    struct job_context_t   *context
-)
-{
-    job_context_id_t id ={ 0, 0 };
-    if (context != NULL) {
-        id.id    = context->ctxid;
-        id.idx   = context->ctxindex;
-    } return id;
 }
 
 thread_id_t

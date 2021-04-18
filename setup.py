@@ -93,7 +93,7 @@ POWER_DEFINES         = []
 PLATFORM_DEFINES      = [] # Set based on platform detection results.
 
 WINDOWS_COMPILE_ARGS  = []
-LINUX_COMPILE_ARGS    = ["-O2","-pthread","-fstrict-aliasing"]
+LINUX_COMPILE_ARGS    = ["-O0","-g","-pthread","-fstrict-aliasing"]
 MACOS_COMPILE_ARGS    = []
 POWER_COMPILE_ARGS    = []
 PLATFORM_COMPILE_ARGS = [] # Set based on platform detection results.
