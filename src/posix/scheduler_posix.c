@@ -279,17 +279,21 @@ pthread_wrapper_entry
  * A default no-op entry point that can be specified for a job.
  * @param ctx The `job_context_t` bound to the thread executing the job.
  * @param job The `job_descriptor_t` specifying data about the executing job.
+ * @param call_type One of the values of the job_call_type_e enumeration indicating the mode in which the entry point is being called.
+ * Each entry point will be called twice - once with JOB_CALL_TYPE_EXECUTE when it is ready to run, and then again with JOB_CALL_TYPE_CLEANUP (possibly from another thread) when it has completed.
  * @return An application-specific exit code, by default, `EXIT_SUCCESS`.
  */
 static int32_t
 default_job_main
 (
     struct job_context_t    *ctx,
-    struct job_descriptor_t *job
+    struct job_descriptor_t *job,
+    int32_t            call_type
 )
 {
-    (void) sizeof(ctx); /* Unused */
-    (void) sizeof(job); /* Unused */
+    (void) sizeof(ctx);       /* Unused */
+    (void) sizeof(job);       /* Unused */
+    (void) sizeof(call_type); /* Unused */
     return EXIT_SUCCESS;
 }
 
@@ -918,6 +922,23 @@ job_scheduler_cancel
     }
 }
 
+struct job_descriptor_t*
+job_scheduler_resolve_job_id
+(
+    struct job_scheduler_t *scheduler,
+    job_id_t                       id
+)
+{
+    if (job_id_valid(id)) {
+        job_scheduler_posix_t *sched_=(job_scheduler_posix_t*) scheduler;
+        uint32_t          slot_index = job_id_get_slot_index_u32(id);
+        job_descriptor_t    *jobdesc =&sched_->jobdesc[slot_index];
+        if (jobdesc->id == id) { /* Check the generation of the job slot */
+            return jobdesc;
+        }
+    } return NULL;
+}
+
 struct job_scheduler_t*
 job_context_scheduler
 (
@@ -1200,7 +1221,7 @@ job_context_wait_job
             }
             /* The job hasn't completed yet, so take and execute a job */
             if ((exec_job = job_context_wait_ready_job(context)) != NULL) {
-                exec_job->exit = exec_job->jobmain(context, exec_job);
+                exec_job->exit = exec_job->jobmain(context, exec_job, JOB_CALL_TYPE_EXECUTE);
                 job_context_complete_job(context, exec_job);
             } else {
                 return 0; /* Queue was signaled */
@@ -1254,13 +1275,15 @@ job_context_wait_ready_job
                 (void) pthread_mutex_unlock(&job_data->lock);
             } return job_desc;
         } else {
-            /* Complete the job without returning to the caller */
+            /* This is a canceled job */
             if (job_data->state != JOB_STATE_CANCELED) {
                 if (pthread_mutex_lock(&job_data->lock) == 0) {
                     job_data->state = JOB_STATE_CANCELED;
                     (void) pthread_mutex_unlock(&job_data->lock);
                 }
-            } job_context_complete_job(context, job_desc);
+            }
+            /* Complete the job without returning to the caller */
+            job_context_complete_job(context, job_desc);
         }
     }
 }
@@ -1302,6 +1325,9 @@ job_context_complete_job
         } (void) pthread_mutex_unlock(&job_data->lock);
     }
     if (completed) {
+        /* Run the cleanup phase for the job */
+        (void) job->jobmain(context, job, JOB_CALL_TYPE_CLEANUP);
+
         /* Release the reference on the job buffer */
         jobbuf_release(sched, job->jobbuf);
 

@@ -122,7 +122,8 @@ typedef uint64_t   thread_id_t;                                                /
 typedef uint32_t (*PFN_thread_start)(void*);                                   /* Function pointer type for operating system thread entry point. */
 typedef int32_t  (*PFN_job_start   )(                                          /* Function pointer type for job entry point. */
     struct job_context_t   *,                                                  /* The context bound to the thread on which the job is executing. */
-    struct job_descriptor_t*                                                   /* Pointer to the job descriptor in the scheduler's job list. */
+    struct job_descriptor_t*,                                                  /* Pointer to the job descriptor in the scheduler's job list. */
+    int32_t                                                                    /* One of the values of the job_call_type_e enumeration. */
 );
 
 typedef enum   job_queue_signal_e {                                            /* Defined values for job queue signals, which can be sent to wake all waiting threads. */
@@ -136,16 +137,16 @@ typedef enum   job_submit_type_e {                                             /
     JOB_SUBMIT_CANCEL                                            = -1L,        /* Cancel the job. */
 } job_submit_type_e;
 
-typedef enum   job_submit_result_e {
+typedef enum   job_submit_result_e {                                           /* The set of status codes that can be returned when submitting a job. */
     JOB_SUBMIT_SUCCESS                                           =  0L,        /* The job was submitted successfully and will run when ready. */
     JOB_SUBMIT_INVALID_JOB                                       = -1L,        /* The job was rejected because some of the job data was invalid. */
     JOB_SUBMIT_TOO_MANY_WAITERS                                  = -2L,        /* The job was rejected because one of its dependencies has too many jobs waiting on it. */
 } job_submit_result_e;
 
-typedef enum   job_context_id_e {                                              /* Define reserved job context identifiers. */
-    JOB_CONTEXT_ID_MAIN                                          =  0U,        /* Identifies the main process thread. */
-    JOB_CONTEXT_ID_USER                                          =  1U,        /* The first available user-defined context identifier. */
-} job_context_id_e;
+typedef enum   job_call_type_e {                                               /* Define the supported job execution stages. */
+    JOB_CALL_TYPE_EXECUTE                                        =  0,         /* The job should run its main body. */
+    JOB_CALL_TYPE_CLEANUP                                        =  1,         /* The job should run its cleanup code. This may be called on a separate thread from main execution (but will not be called concurrently). */
+} job_call_type_e;
 
 typedef enum   job_state_e {                                                   /* Define the possible states for a job. */
     JOB_STATE_UNINITIALIZED                                      =  0,         /* The job data has not been initialized. This value MUST be zero. */
@@ -432,6 +433,19 @@ job_scheduler_get_queue_worker_count
  */
 extern int
 job_scheduler_cancel
+(
+    struct job_scheduler_t *scheduler,
+    job_id_t                       id
+);
+
+/**
+ * Given a job identifier, return a pointer to the corresponding job descriptor.
+ * @param scheduler The scheduler that owns the job storage and defines the job namespace.
+ * @param id The identifier of the job.
+ * @return The job's descriptor slot, or null if the supplied job identifier is invalid.
+ */
+extern struct job_descriptor_t*
+job_scheduler_resolve_job_id
 (
     struct job_scheduler_t *scheduler,
     job_id_t                       id
