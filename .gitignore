@@ -1,7 +1,8 @@
 .vscode/settings.json
 build/
 dist/
-*.egg-info/
+*.egg-info
+.python-version
+.coverage
 __pycache__
 *.so
-.python-version
