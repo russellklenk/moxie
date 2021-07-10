@@ -1,102 +1,183 @@
 import os
+import setuptools
 
 from   distutils.core import Extension
 from   distutils.core import setup
 from   distutils.util import get_platform
 
-EXTENSION_NAME             = 'moxie'
 
-EXTENSION_AUTHOR           = 'Russell Klenk'
-EXTENSION_AUTHOR_EMAIL     = 'contact@russellklenk.com'
-EXTENSION_URL              = 'https://github.com/russellklenk/moxie/'
-
-EXTENSION_VERSION_MAJOR    = 0
-EXTENSION_VERSION_MINOR    = 1
-EXTENSION_VERSION_REVISION = 0
-EXTENSION_VERSION_STRING   = '{}.{}.{}'.format(EXTENSION_VERSION_MAJOR, EXTENSION_VERSION_MINOR, EXTENSION_VERSION_REVISION)
-
-EXTENSION_DESCRIPTION      = 'The moxie resource management toolkit'
-EXTENSION_LONG_DESCRIPTION = """
+MODULE_NAME                       = 'moxie'
+MODULE_ROOT                       = os.path.join(os.path.dirname(os.path.abspath(__file__)), MODULE_NAME)
+MODULE_AUTHOR                     = 'Russell Klenk'
+MODULE_AUTHOR_EMAIL               = 'contact@russellklenk.com'
+MODULE_BASE_URL                   = 'https://github.com/russellklenk/moxie/'
+MODULE_ISSUES_URL                 = 'https://github.com/russellklenk/moxie/issues'
+MODULE_VERSION_MAJOR              = 0
+MODULE_VERSION_MINOR              = 1
+MODULE_VERSION_REVISION           = 0
+MODULE_VERSION_STRING             = '{}.{}.{}'.format(MODULE_VERSION_MAJOR, MODULE_VERSION_MINOR, MODULE_VERSION_REVISION)
+MODULE_DESCRIPTION                = 'The moxie resource management toolkit'
+MODULE_LONG_DESCRIPTION           = """
 moxie is a cross-platform toolkit for management of system resources.
 It allows fine-grained control over memory allocation and distribution
 of work across hardware threads with semi-automated extraction of 
 parallelism using a job scheduler.
 """
 
-IS_WINDOWS            = False
-IS_LINUX              = False
-IS_MACOS              = False
-IS_POWER              = False
-IS_UNKNOWN            = False
+MOXIE_CORE_EXTENSION_NAME         = '_moxie_core'
+MOXIE_CORE_ROOT                   = os.path.join(MODULE_ROOT, MOXIE_CORE_EXTENSION_NAME)
+MOXIE_CORE_HEADER_ROOT            = os.path.join(MOXIE_CORE_ROOT, 'include')
+MOXIE_CORE_SOURCE_ROOT            = os.path.join(MOXIE_CORE_ROOT, 'src')
 
-ROOT_PATH             = os.path.dirname(os.path.abspath(__file__))
-
-COMMON_SOURCES        = [
-    '{}/src/memory.c'  .format(ROOT_PATH),
-    '{}/src/exttypes.c'.format(ROOT_PATH),
-    '{}/src/extfuncs.c'.format(ROOT_PATH)
+MOXIE_CORE_COMMON_DEFINES         = [
+    ('MOXIE_CORE_VERSION_MAJOR'   , '{}'.format(MODULE_VERSION_MAJOR   )),
+    ('MOXIE_CORE_VERSION_MINOR'   , '{}'.format(MODULE_VERSION_MINOR   )),
+    ('MOXIE_CORE_VERSION_REVISION', '{}'.format(MODULE_VERSION_REVISION)),
+    ('__STDC_FORMAT_MACROS'       , '1'                                 ),
+    ('PY_SSIZE_T_CLEAN'           , '1'                                 )
+]
+MOXIE_CORE_LINUX_DEFINES          = [
+    ('_GNU_SOURCE'                , '1'                                 )
+]
+MOXIE_CORE_MACOS_DEFINES          = [
+    # None
+]
+MOXIE_CORE_POSIX_DEFINES          = [
+    # None
+]
+MOXIE_CORE_POWER_DEFINES          = [
+    # None
+]
+MOXIE_CORE_WINOS_DEFINES          = [
+    # None
 ]
 
-PLATFORM_SOURCES      = [] # Set based on platform detection results.
-WINDOWS_SOURCES       = [
-    '{}/src/winos/memory_winos.c'   .format(ROOT_PATH),
-    '{}/src/winos/scheduler_winos.c'.format(ROOT_PATH)
+MOXIE_CORE_COMMON_INCLUDE_DIRS    = [
+    'moxie/_moxie_core/include'
 ]
-LINUX_SOURCES         = [
-    '{}/src/posix/memory_posix.c'   .format(ROOT_PATH),
-    '{}/src/posix/scheduler_posix.c'.format(ROOT_PATH)
+MOXIE_CORE_LINUX_INCLUDE_DIRS     = [
+    # None
 ]
-MACOS_SOURCES         = [
-    '{}/src/posix/memory_posix.c'   .format(ROOT_PATH),
-    '{}/src/posix/scheduler_posix.c'.format(ROOT_PATH)
+MOXIE_CORE_MACOS_INCLUDE_DIRS     = [
+    # None
 ]
-POWER_SOURCES         = [
-    '{}/src/posix/memory_posix.c'   .format(ROOT_PATH),
-    '{}/src/posix/scheduler_posix.c'.format(ROOT_PATH)
+MOXIE_CORE_POSIX_INCLUDE_DIRS     = [
+    # None
+]
+MOXIE_CORE_POWER_INCLUDE_DIRS     = [
+    # None
+]
+MOXIE_CORE_WINOS_INCLUDE_DIRS     = [
+    # None
 ]
 
-WINDOWS_LIBRARIES     = []
-LINUX_LIBRARIES       = []
-MACOS_LIBRARIES       = []
-POWER_LIBRARIES       = []
-PLATFORM_LIBRARIES    = [] # Set based on platform detection results.
-
-COMMON_INCLUDE_DIRS   = [
-    '{}/include'.format(ROOT_PATH),
-    '{}/src'    .format(ROOT_PATH)
+MOXIE_CORE_COMMON_HEADER_FILES    = [
+    'moxie/_moxie_core/include/internal/memory.h',
+    'moxie/_moxie_core/include/internal/platform.h',
+    'moxie/_moxie_core/include/internal/rtloader.h',
+    'moxie/_moxie_core/include/internal/scheduler.h',
+    'moxie/_moxie_core/include/internal/version.h',
+    'moxie/_moxie_core/include/moxie_core.h'
 ]
-WINDOWS_INCLUDE_DIRS  = []
-LINUX_INCLUDE_DIRS    = []
-MACOS_INCLUDE_DIRS    = []
-POWER_INCLUDE_DIRS    = []
-PLATFORM_INCLUDE_DIRS = [] # Set based on platform detection results.
-
-WINDOWS_LIBRARY_DIRS  = []
-LINUX_LIBRARY_DIRS    = []
-MACOS_LIBRARY_DIRS    = []
-POWER_LIBRARY_DIRS    = []
-PLATFORM_LIBRARY_DIRS = [] # Set based on platform detection results.
-
-COMMON_DEFINES        = [
-    ('EXTENSION_NAME'            , '{}'.format(EXTENSION_NAME)),
-    ('EXTENSION_VERSION_MAJOR'   , '{}'.format(EXTENSION_VERSION_MAJOR)),
-    ('EXTENSION_VERSION_MINOR'   , '{}'.format(EXTENSION_VERSION_MINOR)),
-    ('EXTENSION_VERSION_REVISION', '{}'.format(EXTENSION_VERSION_REVISION))
+MOXIE_CORE_LINUX_HEADER_FILES     = [
+    # None
 ]
-WINDOWS_DEFINES       = []
-LINUX_DEFINES         = [
-    ('_GNU_SOURCE'           , '1'),
-    ('__STDC_FORMAT_MACROS'  , '1')
+MOXIE_CORE_MACOS_HEADER_FILES     = [
+    # None
 ]
-MACOS_DEFINES         = []
-POWER_DEFINES         = []
-PLATFORM_DEFINES      = [] # Set based on platform detection results.
+MOXIE_CORE_POSIX_HEADER_FILES     = [
+    # None
+]
+MOXIE_CORE_POWER_HEADER_FILES     = [
+    # None
+]
+MOXIE_CORE_WINOS_HEADER_FILES     = [
+    # None
+]
 
-WINDOWS_COMPILE_ARGS  = []
-LINUX_COMPILE_ARGS    = ["-O0","-g","-pthread","-fstrict-aliasing"]
-MACOS_COMPILE_ARGS    = []
-POWER_COMPILE_ARGS    = []
-PLATFORM_COMPILE_ARGS = [] # Set based on platform detection results.
+MOXIE_CORE_COMMON_LIBRARY_DIRS    = [
+    # None
+]
+MOXIE_CORE_LINUX_LIBRARY_DIRS     = [
+    # None
+]
+MOXIE_CORE_MACOS_LIBRARY_DIRS     = [
+    # None
+]
+MOXIE_CORE_POWER_LIBRARY_DIRS     = [
+    # None
+]
+MOXIE_CORE_WINOS_LIBRARY_DIRS     = [
+    # None
+]
+
+MOXIE_CORE_COMMON_SOURCE_FILES    = [
+    'moxie/_moxie_core/src/internal/memory.c',
+    'moxie/_moxie_core/src/moxie_core.c'
+]
+MOXIE_CORE_POSIX_SOURCE_FILES     = [
+    'moxie/_moxie_core/src/internal/posix/memory_posix.c',
+    'moxie/_moxie_core/src/internal/posix/scheduler_posix.c'
+]
+MOXIE_CORE_WINOS_SOURCE_FILES     = [
+    'moxie/_moxie_core/src/internal/winos/cvmarkers.h',
+    'moxie/_moxie_core/src/internal/winos/memory_winos.c',
+    'moxie/_moxie_core/src/internal/winos/scheduler_winos.c'
+]
+MOXIE_CORE_LINUX_SOURCE_FILES     = [
+    # None
+]
+MOXIE_CORE_MACOS_SOURCE_FILES     = [
+    # None
+]
+MOXIE_CORE_POWER_SOURCE_FILES     = [
+    # None
+]
+
+MOXIE_CORE_COMMON_LIBRARY_FILES   = [
+    # None
+]
+MOXIE_CORE_LINUX_LIBRARY_FILES    = [
+    # None
+]
+MOXIE_CORE_MACOS_LIBRARY_FILES    = [
+    # None
+]
+MOXIE_CORE_POWER_LIBRARY_FILES    = [
+    # None
+]
+MOXIE_CORE_WINOS_LIBRARY_FILES    = [
+    # None
+]
+
+MOXIE_CORE_LINUX_CCFLAGS          = ['-O0', '-g', '-fstrict-aliasing']
+MOXIE_CORE_MACOS_CCFLAGS          = ['-O0', '-g', '-fstrict-aliasing']
+MOXIE_CORE_POSIX_CCFLAGS          = ['-pthread']
+MOXIE_CORE_POWER_CCFLAGS          = ['-O0', '-g', '-fstrict-aliasing']
+MOXIE_CORE_WINOS_CCFLAGS          = []
+
+MOXIE_CORE_LINUX_LDFLAGS          = []
+MOXIE_CORE_MACOS_LDFLAGS          = []
+MOXIE_CORE_POSIX_LDFLAGS          = []
+MOXIE_CORE_POWER_LDFLAGS          = []
+MOXIE_CORE_WINOS_LDFLAGS          = []
+
+MOXIE_CORE_PLATFORM_DEFINES       = []
+MOXIE_CORE_PLATFORM_CCFLAGS       = []
+MOXIE_CORE_PLATFORM_LDFLAGS       = []
+MOXIE_CORE_PLATFORM_HEADERS       = []
+MOXIE_CORE_PLATFORM_SOURCES       = []
+MOXIE_CORE_PLATFORM_LIBRARIES     = []
+MOXIE_CORE_PLATFORM_INCLUDE_DIRS  = []
+MOXIE_CORE_PLATFORM_LIBRARY_DIRS  = []
+
+PLATFORM_NAME_UNKNOWN             = 'Unknown'
+PLATFORM_NAME_LINUX               = 'Linux'
+PLATFORM_NAME_MACOS               = 'macOS'
+PLATFORM_NAME_POWER               = 'Power'
+PLATFORM_NAME_WINOS               = 'Windows'
+PLATFORM_NAME                     = PLATFORM_NAME_UNKNOWN
+
 
 def detect_platform():
     """
@@ -107,136 +188,167 @@ def detect_platform():
     -------
       `True` if the platform is successfully detected.
     """
-    global IS_WINDOWS
-    global IS_LINUX
-    global IS_MACOS
-    global IS_POWER
-    global IS_UNKNOWN
+    global PLATFORM_NAME
+    global PLATFORM_NAME_LINUX
+    global PLATFORM_NAME_MACOS
+    global PLATFORM_NAME_POWER
+    global PLATFORM_NAME_WINOS
+    global PLATFORM_NAME_UNKNOWN
     platform: str = get_platform()
     if not platform:
-        IS_UNKNOWN = True
+        print('ERROR: Unexpected empty return value from distutils.util.get_platform; target platform cannot be determined.')
+        PLATFORM_NAME = PLATFORM_NAME_UNKNOWN
         return False
 
     platform = platform.lower()
+    print(f'STATUS: Performing platform detection based on distutils.util.get_platform() => {platform}.')
     if 'linux' in platform:
-        IS_LINUX = True
         if 'ppc64le' in platform or 'power' in platform:
-            IS_POWER = True
+            PLATFORM_NAME = PLATFORM_NAME_POWER
+        else:
+            PLATFORM_NAME = PLATFORM_NAME_LINUX
         return True
     elif 'macos' in platform or 'darwin' in platform:
-        IS_MACOS = True
+        PLATFORM_NAME = PLATFORM_NAME_MACOS
+        return True
     elif 'win32' in platform or 'win' in platform:
-        IS_WINDOWS = True
+        PLATFORM_NAME = PLATFORM_NAME_WINOS
+        return True
     else:
-        IS_UNKNOWN = True
+        print('ERROR: Unable to detect target platform; please update detection logic in detect_platform() in setup.py.')
+        PLATFORM_NAME = PLATFORM_NAME_UNKNOWN
         return False
 
-    return True
 
-
-def make_extension(extension_name):
+def make_moxie_core_extension():
     """
-    Set up the build environment based on the current target platform and construct the `distutils.core.Extension` object.
-
-    Parameters
-    ----------
-      extension_name: A string specifying the name of the extension.
+    Set up the build environment based on the current target platform and construct the `distutils.core.Extension` object for the _moxie_core extension.
 
     Returns
     -------
       A `distutils.core.Extension` object defining the extension.
     """
-    if not detect_platform():
+    global PLATFORM_NAME
+    global PLATFORM_NAME_UNKNOWN
+    global PLATFORM_NAME_LINUX
+    global PLATFORM_NAME_MACOS
+    global PLATFORM_NAME_POWER
+    global PLATFORM_NAME_WINOS
+    if PLATFORM_NAME == PLATFORM_NAME_UNKNOWN:
         raise RuntimeError('Unable to set up build environment; unrecognized target platform.')
 
-    global WINDOWS_DEFINES
-    global WINDOWS_SOURCES
-    global WINDOWS_LIBRARIES
-    global WINDOWS_COMPILE_ARGS
-    global WINDOWS_INCLUDE_DIRS
-    global WINDOWS_LIBRARY_DIRS
+    global MOXIE_CORE_PLATFORM_DEFINES
+    global MOXIE_CORE_PLATFORM_INCLUDE_DIRS
+    global MOXIE_CORE_PLATFORM_LIBRARY_DIRS
+    global MOXIE_CORE_PLATFORM_HEADERS
+    global MOXIE_CORE_PLATFORM_SOURCES
+    global MOXIE_CORE_PLATFORM_LIBRARIES
+    global MOXIE_CORE_PLATFORM_CCFLAGS
+    global MOXIE_CORE_PLATFORM_LDFLAGS
+    
+    global MOXIE_CORE_COMMON_DEFINES      , MOXIE_CORE_LINUX_DEFINES      , MOXIE_CORE_MACOS_DEFINES      , MOXIE_CORE_POSIX_DEFINES      , MOXIE_CORE_POWER_DEFINES      , MOXIE_CORE_WINOS_DEFINES
+    global MOXIE_CORE_COMMON_INCLUDE_DIRS , MOXIE_CORE_LINUX_INCLUDE_DIRS , MOXIE_CORE_MACOS_INCLUDE_DIRS , MOXIE_CORE_POSIX_INCLUDE_DIRS , MOXIE_CORE_POWER_INCLUDE_DIRS , MOXIE_CORE_WINOS_INCLUDE_DIRS
+    global MOXIE_CORE_COMMON_LIBRARY_DIRS , MOXIE_CORE_LINUX_LIBRARY_DIRS , MOXIE_CORE_MACOS_LIBRARY_DIRS ,                                 MOXIE_CORE_POWER_LIBRARY_DIRS , MOXIE_CORE_WINOS_LIBRARY_DIRS
+    global MOXIE_CORE_COMMON_HEADER_FILES , MOXIE_CORE_LINUX_HEADER_FILES , MOXIE_CORE_MACOS_HEADER_FILES , MOXIE_CORE_POSIX_HEADER_FILES , MOXIE_CORE_POWER_HEADER_FILES , MOXIE_CORE_WINOS_HEADER_FILES
+    global MOXIE_CORE_COMMON_SOURCE_FILES , MOXIE_CORE_LINUX_SOURCE_FILES , MOXIE_CORE_MACOS_SOURCE_FILES , MOXIE_CORE_POSIX_SOURCE_FILES , MOXIE_CORE_POWER_SOURCE_FILES , MOXIE_CORE_WINOS_SOURCE_FILES
+    global MOXIE_CORE_COMMON_LIBRARY_FILES, MOXIE_CORE_LINUX_LIBRARY_FILES, MOXIE_CORE_MACOS_LIBRARY_FILES,                                 MOXIE_CORE_POWER_LIBRARY_FILES, MOXIE_CORE_WINOS_LIBRARY_FILES
+    global                                  MOXIE_CORE_LINUX_CCFLAGS      , MOXIE_CORE_MACOS_CCFLAGS      , MOXIE_CORE_POSIX_CCFLAGS      , MOXIE_CORE_POWER_CCFLAGS      , MOXIE_CORE_WINOS_CCFLAGS
+    global                                  MOXIE_CORE_LINUX_LDFLAGS      , MOXIE_CORE_MACOS_LDFLAGS      , MOXIE_CORE_POSIX_LDFLAGS      , MOXIE_CORE_POWER_LDFLAGS      , MOXIE_CORE_WINOS_LDFLAGS
 
-    global LINUX_DEFINES
-    global LINUX_SOURCES
-    global LINUX_LIBRARIES
-    global LINUX_COMPILE_ARGS
-    global LINUX_INCLUDE_DIRS
-    global LINUX_LIBRARY_DIRS
+    if PLATFORM_NAME == PLATFORM_NAME_LINUX:
+        MOXIE_CORE_PLATFORM_DEFINES       = MOXIE_CORE_LINUX_DEFINES      + MOXIE_CORE_POSIX_DEFINES
+        MOXIE_CORE_PLATFORM_INCLUDE_DIRS  = MOXIE_CORE_LINUX_INCLUDE_DIRS + MOXIE_CORE_POSIX_INCLUDE_DIRS
+        MOXIE_CORE_PLATFORM_LIBRARY_DIRS  = MOXIE_CORE_LINUX_LIBRARY_DIRS
+        MOXIE_CORE_PLATFORM_HEADERS       = MOXIE_CORE_LINUX_HEADER_FILES + MOXIE_CORE_POSIX_HEADER_FILES
+        MOXIE_CORE_PLATFORM_SOURCES       = MOXIE_CORE_LINUX_SOURCE_FILES + MOXIE_CORE_POSIX_SOURCE_FILES
+        MOXIE_CORE_PLATFORM_LIBRARIES     = MOXIE_CORE_LINUX_LIBRARY_FILES
+        MOXIE_CORE_PLATFORM_CCFLAGS       = MOXIE_CORE_LINUX_CCFLAGS      + MOXIE_CORE_POSIX_CCFLAGS
+        MOXIE_CORE_PLATFORM_LDFLAGS       = MOXIE_CORE_LINUX_LDFLAGS      + MOXIE_CORE_POSIX_LDFLAGS
+    
+    elif PLATFORM_NAME == PLATFORM_NAME_MACOS:
+        MOXIE_CORE_PLATFORM_DEFINES       = MOXIE_CORE_MACOS_DEFINES      + MOXIE_CORE_POSIX_DEFINES
+        MOXIE_CORE_PLATFORM_INCLUDE_DIRS  = MOXIE_CORE_MACOS_INCLUDE_DIRS + MOXIE_CORE_POSIX_INCLUDE_DIRS
+        MOXIE_CORE_PLATFORM_LIBRARY_DIRS  = MOXIE_CORE_MACOS_LIBRARY_DIRS
+        MOXIE_CORE_PLATFORM_HEADERS       = MOXIE_CORE_MACOS_HEADER_FILES + MOXIE_CORE_POSIX_HEADER_FILES
+        MOXIE_CORE_PLATFORM_SOURCES       = MOXIE_CORE_MACOS_SOURCE_FILES + MOXIE_CORE_POSIX_SOURCE_FILES
+        MOXIE_CORE_PLATFORM_LIBRARIES     = MOXIE_CORE_MACOS_LIBRARY_FILES
+        MOXIE_CORE_PLATFORM_CCFLAGS       = MOXIE_CORE_MACOS_CCFLAGS      + MOXIE_CORE_POSIX_CCFLAGS
+        MOXIE_CORE_PLATFORM_LDFLAGS       = MOXIE_CORE_MACOS_LDFLAGS      + MOXIE_CORE_POSIX_LDFLAGS
 
-    global MACOS_DEFINES
-    global MACOS_SOURCES
-    global MACOS_LIBRARIES
-    global MACOS_COMPILE_ARGS
-    global MACOS_INCLUDE_DIRS
-    global MACOS_LIBRARY_DIRS
 
-    global POWER_DEFINES
-    global POWER_SOURCES
-    global POWER_LIBRARIES
-    global POWER_COMPILE_ARGS
-    global POWER_INCLUDE_DIRS
-    global POWER_LIBRARY_DIRS
+    elif PLATFORM_NAME == PLATFORM_NAME_POWER:
+        MOXIE_CORE_PLATFORM_DEFINES       = MOXIE_CORE_POWER_DEFINES      + MOXIE_CORE_POSIX_DEFINES
+        MOXIE_CORE_PLATFORM_INCLUDE_DIRS  = MOXIE_CORE_POWER_INCLUDE_DIRS + MOXIE_CORE_POSIX_INCLUDE_DIRS
+        MOXIE_CORE_PLATFORM_LIBRARY_DIRS  = MOXIE_CORE_POWER_LIBRARY_DIRS
+        MOXIE_CORE_PLATFORM_HEADERS       = MOXIE_CORE_POWER_HEADER_FILES + MOXIE_CORE_POSIX_HEADER_FILES
+        MOXIE_CORE_PLATFORM_SOURCES       = MOXIE_CORE_POWER_SOURCE_FILES + MOXIE_CORE_POSIX_SOURCE_FILES
+        MOXIE_CORE_PLATFORM_LIBRARIES     = MOXIE_CORE_POWER_LIBRARY_FILES
+        MOXIE_CORE_PLATFORM_CCFLAGS       = MOXIE_CORE_POWER_CCFLAGS      + MOXIE_CORE_POSIX_CCFLAGS
+        MOXIE_CORE_PLATFORM_LDFLAGS       = MOXIE_CORE_POWER_LDFLAGS      + MOXIE_CORE_POSIX_LDFLAGS
 
-    global PLATFORM_DEFINES
-    global PLATFORM_SOURCES
-    global PLATFORM_LIBRARIES
-    global PLATFORM_COMPILE_ARGS
-    global PLATFORM_INCLUDE_DIRS
-    global PLATFORM_LIBRARY_DIRS
-
-    if IS_WINDOWS:
-        PLATFORM_DEFINES      = WINDOWS_DEFINES
-        PLATFORM_SOURCES      = WINDOWS_SOURCES
-        PLATFORM_LIBRARIES    = WINDOWS_LIBRARIES
-        PLATFORM_COMPILE_ARGS = WINDOWS_COMPILE_ARGS
-        PLATFORM_INCLUDE_DIRS = WINDOWS_INCLUDE_DIRS
-        PLATFORM_LIBRARY_DIRS = WINDOWS_LIBRARY_DIRS
-
-    elif IS_POWER: # NOTE: Should appear _before_ IS_LINUX check
-        PLATFORM_DEFINES      = POWER_DEFINES
-        PLATFORM_SOURCES      = POWER_SOURCES
-        PLATFORM_LIBRARIES    = POWER_LIBRARIES
-        PLATFORM_COMPILE_ARGS = POWER_COMPILE_ARGS
-        PLATFORM_INCLUDE_DIRS = POWER_INCLUDE_DIRS
-        PLATFORM_LIBRARY_DIRS = POWER_LIBRARY_DIRS
-
-    elif IS_LINUX:
-        PLATFORM_DEFINES      = LINUX_DEFINES
-        PLATFORM_SOURCES      = LINUX_SOURCES
-        PLATFORM_LIBRARIES    = LINUX_LIBRARIES
-        PLATFORM_COMPILE_ARGS = LINUX_COMPILE_ARGS
-        PLATFORM_INCLUDE_DIRS = LINUX_INCLUDE_DIRS
-        PLATFORM_LIBRARY_DIRS = LINUX_LIBRARY_DIRS
-
-    elif IS_MACOS:
-        PLATFORM_DEFINES      = MACOS_DEFINES
-        PLATFORM_SOURCES      = MACOS_SOURCES
-        PLATFORM_LIBRARIES    = MACOS_LIBRARIES
-        PLATFORM_COMPILE_ARGS = MACOS_COMPILE_ARGS
-        PLATFORM_INCLUDE_DIRS = MACOS_INCLUDE_DIRS
-        PLATFORM_LIBRARY_DIRS = MACOS_LIBRARY_DIRS
+    elif PLATFORM_NAME == PLATFORM_NAME_WINOS:
+        MOXIE_CORE_PLATFORM_DEFINES       = MOXIE_CORE_WINOS_DEFINES
+        MOXIE_CORE_PLATFORM_INCLUDE_DIRS  = MOXIE_CORE_WINOS_INCLUDE_DIRS
+        MOXIE_CORE_PLATFORM_LIBRARY_DIRS  = MOXIE_CORE_WINOS_LIBRARY_DIRS
+        MOXIE_CORE_PLATFORM_HEADERS       = MOXIE_CORE_WINOS_HEADER_FILES
+        MOXIE_CORE_PLATFORM_SOURCES       = MOXIE_CORE_WINOS_SOURCE_FILES
+        MOXIE_CORE_PLATFORM_LIBRARIES     = MOXIE_CORE_WINOS_LIBRARY_FILES
+        MOXIE_CORE_PLATFORM_CCFLAGS       = MOXIE_CORE_WINOS_CCFLAGS
+        MOXIE_CORE_PLATFORM_LDFLAGS       = MOXIE_CORE_WINOS_LDFLAGS
 
     else:
         raise RuntimeError('Unable to set up build environment; unrecognized target platform.')
 
     return Extension(
-        name=extension_name,
-        sources=COMMON_SOURCES + PLATFORM_SOURCES, 
-        libraries=PLATFORM_LIBRARIES,
-        include_dirs=COMMON_INCLUDE_DIRS + PLATFORM_INCLUDE_DIRS,
-        library_dirs=PLATFORM_LIBRARY_DIRS,
-        define_macros=COMMON_DEFINES + PLATFORM_DEFINES,
-        extra_compile_args=PLATFORM_COMPILE_ARGS
+        name               = '_moxie_core',
+        sources            = MOXIE_CORE_COMMON_SOURCE_FILES + MOXIE_CORE_PLATFORM_SOURCES, 
+        libraries          = MOXIE_CORE_PLATFORM_LIBRARIES,
+        library_dirs       = MOXIE_CORE_COMMON_LIBRARY_DIRS + MOXIE_CORE_PLATFORM_LIBRARY_DIRS,
+        include_dirs       = MOXIE_CORE_COMMON_INCLUDE_DIRS + MOXIE_CORE_PLATFORM_INCLUDE_DIRS,
+        define_macros      = MOXIE_CORE_COMMON_DEFINES      + MOXIE_CORE_PLATFORM_DEFINES,
+        extra_compile_args = MOXIE_CORE_PLATFORM_CCFLAGS,
+        extra_link_args    = MOXIE_CORE_PLATFORM_LDFLAGS,
+        depends            = MOXIE_CORE_COMMON_HEADER_FILES + MOXIE_CORE_PLATFORM_HEADERS
     )
 
 
+if not detect_platform():
+    raise RuntimeError('Failed to determine the target runtime platform.')
+
 setup(
-    name=EXTENSION_NAME,
-    version=EXTENSION_VERSION_STRING,
-    description=EXTENSION_DESCRIPTION,
-    long_description=EXTENSION_LONG_DESCRIPTION,
-    author=EXTENSION_AUTHOR, 
-    author_email=EXTENSION_AUTHOR_EMAIL,
-    url=EXTENSION_URL,
-    ext_modules=[make_extension(extension_name=EXTENSION_NAME)]
+    name                          = MODULE_NAME,
+    version                       = MODULE_VERSION_STRING,
+    author                        = MODULE_AUTHOR,
+    author_email                  = MODULE_AUTHOR_EMAIL,
+    url                           = MODULE_BASE_URL,
+    project_urls                  = {
+        'Bug Tracker'             : MODULE_ISSUES_URL
+    },
+    description                   = MODULE_DESCRIPTION,
+    long_description              = MODULE_LONG_DESCRIPTION,
+    long_description_content_type = 'text/markdown',
+    classifiers                   = [
+        'Programming Language :: Python :: 3',
+        'Programming Language :: C',
+        'Programming Language :: Python :: Implementation :: CPython',
+        'Development Status :: 3 - Alpha',
+        'Intended Audience :: Developers',
+        'License :: Other/Proprietary License',
+        'Natural Language :: English',
+        'Operating System :: MacOS :: MacOS X',
+        'Operating System :: Microsoft :: Windows',
+        'Operating System :: POSIX :: Linux',
+        'Operating System :: POSIX :: Other',
+        'Topic :: Scientific/Engineering',
+        'Topic :: Software Development :: Libraries'
+    ],
+    python_requires              = '>=3.8',
+    ext_modules                  = [
+        make_moxie_core_extension()
+    ],
+    data_files                   = [
+        ('moxie/_moxie_core/include'         , ['moxie/_moxie_core/include/moxie_core.h']),
+        ('moxie/_moxie_core/include/internal', ['moxie/_moxie_core/include/internal/memory.h', 'moxie/_moxie_core/include/internal/platform.h', 'moxie/_moxie_core/include/internal/rtloader.h', 'moxie/_moxie_core/include/internal/scheduler.h', 'moxie/_moxie_core/include/internal/version.h'])
+    ],
+    packages                     = setuptools.find_namespace_packages(include=['moxie','moxie.*'])
 )
