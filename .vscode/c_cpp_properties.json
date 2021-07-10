@@ -1,0 +1,49 @@
+{
+    "configurations": [
+        {
+            "name": "Linux",
+            "includePath": [
+                "${env:CONDA_PREFIX}/include/python3.8",
+                "${workspaceFolder}/moxie/_moxie_core/include"
+            ],
+            "defines": [
+                "EXTENSION_NAME=moxie",
+                "_GNU_SOURCE=1",
+                "__STDC_FORMAT_MACROS=1"
+            ],
+            "compilerPath": "/usr/bin/gcc",
+            "cStandard": "gnu99",
+            "cppStandard": "gnu++11",
+            "intelliSenseMode": "linux-gcc-x64"
+        },
+        {
+            "name": "Win32",
+            "includePath": [
+                "${env:CONDA_PREFIX}/include/python3.8",
+                "${workspaceFolder}/moxie/_moxie_core/include"
+            ],
+            "defines": [
+                "__STDC_FORMAT_MACROS=1"
+            ],
+            "compilerPath": "",
+            "cStandard": "c99",
+            "cppStandard": "c++11",
+            "intelliSenseMode": "windows-msvc-x64"
+        },
+        {
+            "name": "Mac",
+            "includePath": [
+                "${env:CONDA_PREFIX}/include/python3.8",
+                "${workspaceFolder}/moxie/_moxie_core/include"
+            ],
+            "defines": [
+                "__STDC_FORMAT_MACROS=1"
+            ],
+            "compilerPath": "",
+            "cStandard": "c99",
+            "cppStandard": "c++11",
+            "intelliSenseMode": "macos-clang-x64"
+        }
+    ],
+    "version": 4
+}
