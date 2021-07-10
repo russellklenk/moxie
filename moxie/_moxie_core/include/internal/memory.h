@@ -521,7 +521,7 @@ mem_chunk_release
  * @param alloc The memory allocator structure to initialize.
  * @param chunk_size The size of the initial memory allocation, in bytes.
  * @param guard_size The size of the guard region, in bytes. This value may be zero.
- * @param alignment The desired alignment of the allocated region, in bytes. This must be a non-zero power of two.
+ * @param alignment The desired alignment of the allocated region, in bytes. Specify 0 to use the default alignment (16 bytes); otherwise, this must be a power-of-two.
  * @param flags A combination of one or more bitwise OR'd values from the mem_allocation_flags_e enumeration.
  * @param access A combination of one or more bitwise OR'd values from the mem_access_flags_e enumeration.
  * @param name A nul-terminated, UTF-8 encoded string specifying a name for the allocator.
