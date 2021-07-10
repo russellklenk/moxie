@@ -6,7 +6,7 @@
 
 #include <Windows.h>
 
-#include "moxie/memory.h"
+#include "internal/memory.h"
 
 void
 mem_copy

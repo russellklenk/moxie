@@ -9,7 +9,7 @@
 #include <execinfo.h>
 #include <sys/mman.h>
 
-#include "moxie/scheduler.h"
+#include "internal/scheduler.h"
 
 /**
  * Return the byte alignment of a given type.

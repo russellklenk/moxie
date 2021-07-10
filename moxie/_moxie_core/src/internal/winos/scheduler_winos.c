@@ -8,7 +8,7 @@
 #include <Windows.h>
 
 #include "winos/cvmarkers.h" /* Part of Concurrency Visualizer SDK */
-#include "moxie/scheduler.h"
+#include "internal/scheduler.h"
 
 /**
  * Return the byte alignment of a given type.

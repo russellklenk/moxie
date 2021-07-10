@@ -8,7 +8,7 @@
 #include <execinfo.h>
 #include <sys/mman.h>
 
-#include "moxie/memory.h"
+#include "internal/memory.h"
 
 void
 mem_copy

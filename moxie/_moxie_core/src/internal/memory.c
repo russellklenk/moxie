@@ -1,7 +1,7 @@
 #include <errno.h>
 #include <assert.h>
 
-#include "moxie/memory.h"
+#include "internal/memory.h"
 
 static const size_t     DEFAULT_ALIGNMENT = 16;
 static const char      *UNNAMED_ALLOCATOR = "(Unnamed mem_allocator)";
