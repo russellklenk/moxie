@@ -24,7 +24,7 @@ and then to actually build the module (with extensions):
 
 to build just the extensions:
 ```bash
-(moxie-py3) moxie$ python3 setup.py build
+(moxie-py3) moxie$ python3 setup.py bdist_wheel --keep-temp
 ```
 
 ## Installing a Development Build
@@ -40,6 +40,7 @@ moxie$ conda activate install-env
 With this approach you have to uninstall and reinstall the `moxie` module with each change. Alternatively, you can build once and then symlink the resulting `.so` file(s) like so:
 ```bash
 (moxie-py3) moxie$ python3 -m build
+(moxie-py3) moxie$ python3 setup.py bdist_wheel --keep-temp
 (moxie-py3) moxie$ ln -s path/to/moxie/root/build/lib.linux-x86_64/moxie/_moxie_core.cpython-38m-x86_64-linux-gnu.so moxie/
 ```
 
