@@ -14,8 +14,8 @@
 #define PyMoxie_LogErrorV(_format, ...)                                        
 #endif
 
-#define PyMoxie_ReadyType(_type_instance)                                      \
-    if (ready_type_instance((void*)_type_instance) == -1) {                    \
+#define PyMoxie_ReadyType(_module, _type_name, _type_instance)                 \
+    if (ready_type_instance(_module,_type_name,(void*)_type_instance) == -1) { \
         return -1;                                                             \
     }
 
@@ -314,7 +314,7 @@ static PyMethodDef PyMoxie_Core_ExtensionFunctions[] = {
     {
         .ml_name  = "reset_memory_allocator_to_marker",
         .ml_meth  =(PyCFunction) PyMoxie_Reset_Allocator_To_Marker,
-        .ml_flags = METH_VARARGS,
+        .ml_flags = METH_VARARGS | METH_KEYWORDS,
         .ml_doc   = PyDoc_STR("Reset the state of a memory arena to a previously obtained marker, invalidating all allocations made since the marker was obtained.")
     },
     {
@@ -516,18 +516,29 @@ PyTypeObject PyMoxie_InternalJobSchedulerType = {
 
 /**
  * Helper routine to call PyType_Ready and retain a reference for a specific type object.
+ * @param _module The module object from which the type should be exposed.
+ * @param _type_name A nul-terminated string literal specifying the simple type name.
  * @param _type_instance The Python type object address.
  * @return Zero of the operation is successful, or -1 if an error occurred.
  */
 static int
 ready_type_instance
 (
-    void *_type_instance
+    PyObject   *_module,
+    char const *_type_name,
+    void       *_type_instance
 )
-{   assert(_type_instance != NULL && "Expected non-NULL _type_instance argument");
+{   assert(_module != NULL && "Expected non-NULL _module argument");
+    assert(_type_name != NULL && "Expected non-NULL _type_name argument");
+    assert(_type_instance != NULL && "Expected non-NULL _type_instance argument");
     if (PyType_Ready((PyTypeObject*)_type_instance) >= 0) {
-        Py_INCREF((PyObject*)_type_instance);
-        return 0;
+        if (PyModule_AddObject(_module, _type_name, (PyObject*)_type_instance) >= 0) {
+            Py_INCREF((PyObject*)_type_instance);
+            return 0;
+        } else {
+            assert(0 && "PyModule_AddObject failed");
+            return -1;
+        }
     } else {
         assert(0 && "PyType_Ready failed");
         return -1;
@@ -545,12 +556,12 @@ extension_ready_types
     PyObject *_moxie_core
 )
 {   assert(_moxie_core != NULL && "Expected non-NULL _moxie_core module argument");
-    PyMoxie_ReadyType(&PyMoxie_MemoryMarkerType);
-    PyMoxie_ReadyType(&PyMoxie_MemoryAllocationType);
-    PyMoxie_ReadyType(&PyMoxie_InternalAllocatorType);
-    PyMoxie_ReadyType(&PyMoxie_InternalJobQueueType);
-    PyMoxie_ReadyType(&PyMoxie_InternalJobContextType);
-    PyMoxie_ReadyType(&PyMoxie_InternalJobSchedulerType);
+    PyMoxie_ReadyType(_moxie_core, "MemoryMarker"        , &PyMoxie_MemoryMarkerType);
+    PyMoxie_ReadyType(_moxie_core, "MemoryAllocation"    , &PyMoxie_MemoryAllocationType);
+    PyMoxie_ReadyType(_moxie_core, "InternalAllocator"   , &PyMoxie_InternalAllocatorType);
+    PyMoxie_ReadyType(_moxie_core, "InternalJobQueue"    , &PyMoxie_InternalJobQueueType);
+    PyMoxie_ReadyType(_moxie_core, "InternalJobContext"  , &PyMoxie_InternalJobContextType);
+    PyMoxie_ReadyType(_moxie_core, "InternalJobScheduler", &PyMoxie_InternalJobSchedulerType);
     return 0;
 }
 
@@ -1843,6 +1854,13 @@ PyMoxie_MemoryAllocation_Create
             readonly_bool = PyMoxie_Retain(Py_True);
         }
     }
+    inst->base_address_int = base_address_int;
+    inst->alignment_int    = alignment_int;
+    inst->length_int       = length_int;
+    inst->readonly_bool    = readonly_bool;
+    inst->base_address     = address;
+    inst->byte_length      = length;
+    inst->tag              = arena->allocator.allocator_tag;
     return inst;
 
 cleanup_and_fail:
