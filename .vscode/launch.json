@@ -11,6 +11,14 @@
             "module": "pytest"
         },
         {
+            "name": "Python: sample.py",
+            "type": "python",
+            "request": "launch",
+            "program": "./sample.py",
+            "console": "integratedTerminal",
+            "stopOnEntry": true
+        },
+        {
             "name": "(gdb) Debug Extension",
             "type": "cppdbg",
             "request": "attach",
@@ -26,11 +34,20 @@
             ]
         },
         {
-            "name": "Python: Current File",
-            "type": "python",
+            "name": "(gdb) Debug Sample",
+            "type": "cppdbg",
             "request": "launch",
-            "program": "${file}",
-            "console": "integratedTerminal"
+            "program": "${env:CONDA_PREFIX}/bin/python",
+            "args": ["sample.py"],
+            "cwd": "${workspaceRoot}",
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ]
         }
     ]
 }
