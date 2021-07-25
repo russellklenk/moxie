@@ -1479,6 +1479,9 @@ PyMoxie_Submit_Python_Job
         return NULL;
     }
 #endif
+    if ((jobdesc = job_scheduler_resolve_job_id(self_->sched->state, job_id)) == NULL) {
+        return PyLong_FromLong((long) JOB_SUBMIT_INVALID_JOB);
+    }
     if (queue == NULL || queue == (PyMoxie_InternalJobQueue*) Py_None) {
         /* Use the default queue for the job context. */
         jobdesc->target = NULL;
